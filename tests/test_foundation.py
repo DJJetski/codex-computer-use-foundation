@@ -1185,16 +1185,24 @@ class FoundationTests(unittest.TestCase):
             self.assertEqual(build.returncode, 0, build.stdout)
             package = release_out / "public"
             self.assertTrue((package / "scripts/install.py").is_file())
-            self.assertTrue((package / "CONTRIBUTING.md").is_file())
             self.assertTrue((package / "LICENSE").is_file())
             self.assertTrue((package / "SECURITY.md").is_file())
             self.assertTrue((package / "docs/WHAT-IS-COMPUTER-USE.md").is_file())
             self.assertTrue((package / "docs/CAPABILITY-PARITY.md").is_file())
             self.assertTrue((package / "docs/releases/v0.1.11.md").is_file())
-            self.assertTrue((package / ".github/FUNDING.yml").is_file())
-            self.assertTrue((package / ".github/workflows/ci.yml").is_file())
-            self.assertFalse((package / ".github/workflows/codeql.yml").exists())
+            self.assertFalse((package / "AGENTS.md").exists())
+            self.assertFalse((package / "CONTRIBUTING.md").exists())
+            self.assertFalse((package / ".github").exists())
+            self.assertFalse((package / ".githooks").exists())
+            self.assertFalse((package / "docs/PUBLICATION.md").exists())
+            self.assertFalse((package / "docs/RELEASE-CHECKLIST.md").exists())
             self.assertFalse((package / "docs/internal").exists())
+            self.assertFalse((package / "scripts/build-public-release.py").exists())
+            self.assertFalse((package / "scripts/install-git-hooks.py").exists())
+            self.assertFalse((package / "scripts/public-release-audit.py").exists())
+            self.assertFalse((package / "scripts/release-drill.py").exists())
+            self.assertFalse((package / "scripts/secret-scan.py").exists())
+            self.assertFalse((package / "tests/test_foundation.py").exists())
             self.assertFalse((package / "src/skills/macos-computer-use/references").exists())
             home = tmp_path / "home"
             (home / ".codex").mkdir(parents=True)
@@ -1265,6 +1273,21 @@ class FoundationTests(unittest.TestCase):
         assert spec is not None and spec.loader is not None
         spec.loader.exec_module(module)
         self.assertFalse(any(path.startswith("assets/") for path in module.PUBLIC_EXACT))
+        self.assertFalse(any(path.startswith(".github/") for path in module.PUBLIC_EXACT))
+        self.assertFalse(any(path.startswith(".githooks/") for path in module.PUBLIC_EXACT))
+        self.assertFalse(any(path.startswith("tests/") for path in module.PUBLIC_EXACT))
+        for maintainer_file in [
+            "AGENTS.md",
+            "CONTRIBUTING.md",
+            "docs/PUBLICATION.md",
+            "docs/RELEASE-CHECKLIST.md",
+            "scripts/build-public-release.py",
+            "scripts/install-git-hooks.py",
+            "scripts/public-release-audit.py",
+            "scripts/release-drill.py",
+            "scripts/secret-scan.py",
+        ]:
+            self.assertNotIn(maintainer_file, module.PUBLIC_EXACT)
 
     def test_public_release_manifest_and_tarball_have_sha256_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2397,6 +2420,17 @@ class FoundationTests(unittest.TestCase):
         module = load_script_module("public_release_audit_provenance_test", "scripts/public-release-audit.py")
         findings = module.scan_release_provenance_contract()
         self.assertEqual(findings, [])
+
+    def test_public_release_audit_rejects_maintainer_docs_on_public_surface(self) -> None:
+        module = load_script_module("public_release_audit_surface_test", "scripts/public-release-audit.py")
+        self.assertEqual(
+            module.surface_deny_reason("docs/RELEASE-CHECKLIST.md"),
+            "denylisted maintainer-only public surface path",
+        )
+        self.assertEqual(
+            module.surface_deny_reason("docs/PUBLICATION.md"),
+            "denylisted maintainer-only public surface path",
+        )
 
     def test_public_release_audit_scans_history_for_email_and_secret_patterns(self) -> None:
         module_path = SCRIPTS / "public-release-audit.py"

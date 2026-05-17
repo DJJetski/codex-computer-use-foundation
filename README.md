@@ -228,7 +228,6 @@ if needed, then retry from a fresh Codex thread.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the installer, guard, launcher, and plugin route fit together |
 | [`docs/CURRENT-STATE.md`](docs/CURRENT-STATE.md) | The health contract for a working installation |
 | [`SECURITY.md`](SECURITY.md) | Security boundaries, reporting, and privacy expectations |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution checks and review expectations |
 
 ## License
 

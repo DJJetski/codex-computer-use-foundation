@@ -8,6 +8,9 @@ machine-local state out of the repository.
 
 Use a normal clone of this repository. The checkout is source; the installed
 runtime lives under the target user's `$HOME/.codex`.
+These checks are for source contributors and maintainers. Users installing from
+the generated download package only need the install and verification commands
+in `README.md` and `docs/INSTALL.md`.
 
 Preview an install:
 

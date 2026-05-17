@@ -46,6 +46,10 @@ SURFACE_DENY_PARTS = {
     "__pycache__",
     ".pytest_cache",
 }
+SURFACE_DENY_EXACT = {
+    "docs/PUBLICATION.md",
+    "docs/RELEASE-CHECKLIST.md",
+}
 LOCAL_ARTIFACT_NAMES = {
     ".DS_Store",
 }
@@ -192,6 +196,8 @@ def scan_file(path: Path, markers: list[str]) -> list[str]:
 
 
 def surface_deny_reason(path: str) -> str | None:
+    if path in SURFACE_DENY_EXACT:
+        return "denylisted maintainer-only public surface path"
     if any(path.startswith(prefix) for prefix in SURFACE_DENY_PREFIXES):
         return "denylisted public surface path"
     parts = set(Path(path).parts)

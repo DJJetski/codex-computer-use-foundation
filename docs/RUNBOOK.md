@@ -55,26 +55,6 @@ thread before native operation is proven.
 If the only failure is `failure_class=stale_native_smoke`, run full `ensure`.
 That is the intended fail-closed refresh path.
 
-## Maintainer / Source Checkout Verification
-
-Normal users can skip this section unless they are working from a source
-checkout and want to validate the repository itself.
-
-From the source repo:
-
-```bash
-cd codex-computer-use-foundation
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
-scripts/install.py --dry-run
-scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
-scripts/secret-scan.py --include-untracked
-```
-
-Use `scripts/install.py --yes --full-ensure` to reinstall manifest-owned live
-files from the repo and prove the native path. Its rollback snapshot also
-captures config, LaunchAgent, bootstrap backups, and Computer Use plugin
-routing files that postinstall can mutate.
-
 ## Full Repair And Validation
 
 ```bash

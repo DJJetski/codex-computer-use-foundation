@@ -83,7 +83,6 @@ flowchart TD
 
 Files:
 
-- `AGENTS.md` in this source distribution for repo-local operating rules
 - `~/.codex/skills/macos-computer-use/SKILL.md`
 - Official Computer Use plugin MCP metadata under the plugin cache
 

@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,17 +29,6 @@ MANIFEST_SCHEMA_VERSION = 4
 IGNORABLE_EXISTING_RELEASE_FILES = {".DS_Store"}
 
 PUBLIC_EXACT = {
-    ".github/ISSUE_TEMPLATE/bug_report.yml",
-    ".github/ISSUE_TEMPLATE/config.yml",
-    ".github/dependabot.yml",
-    ".github/FUNDING.yml",
-    ".github/pull_request_template.md",
-    ".github/workflows/ci.yml",
-    ".gitattributes",
-    ".gitignore",
-    ".githooks/pre-push",
-    "AGENTS.md",
-    "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
     "SECURITY.md",
@@ -49,18 +39,12 @@ PUBLIC_EXACT = {
     "docs/releases/v0.1.11.md",
     "docs/RUNBOOK.md",
     "docs/WHAT-IS-COMPUTER-USE.md",
-    "scripts/build-public-release.py",
     "scripts/foundation_manifest.py",
-    "scripts/install-git-hooks.py",
     "scripts/install.py",
-    "scripts/public-release-audit.py",
-    "scripts/release-drill.py",
     "scripts/rollback.py",
-    "scripts/secret-scan.py",
     "scripts/snapshot-live-state.py",
     "scripts/uninstall.py",
     "scripts/verify-live-state.py",
-    "tests/test_foundation.py",
 }
 
 PUBLIC_INSTALL_SOURCES = frozenset(str(item["source"]) for item in INSTALL_MANIFEST)
@@ -80,6 +64,40 @@ DENY_PARTS = {
     "__pycache__",
     ".pytest_cache",
 }
+
+MAINTAINER_ONLY_PACKAGE_EXACT = {
+    ".gitattributes",
+    ".gitignore",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/PUBLICATION.md",
+    "docs/RELEASE-CHECKLIST.md",
+    "scripts/build-public-release.py",
+    "scripts/install-git-hooks.py",
+    "scripts/public-release-audit.py",
+    "scripts/release-drill.py",
+    "scripts/secret-scan.py",
+    "tests/test_foundation.py",
+}
+
+MAINTAINER_ONLY_PACKAGE_PREFIXES = (
+    ".github/",
+    ".githooks/",
+    "tests/",
+)
+
+PACKAGE_SECRET_VALUE_PATTERNS = [
+    re.compile(r"-----BEGIN (RSA |EC |OPENSSH |)?PRIVATE KEY-----"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{24,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{24,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{24,}\b"),
+    re.compile(r"\bya29\.[A-Za-z0-9_-]{24,}\b"),
+    re.compile(r"(?i)authorization\s*[:=]\s*bearer\s+[A-Za-z0-9._-]{20,}"),
+    re.compile(
+        r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)"
+        r"\s*[:=]\s*['\"]?[A-Za-z0-9._/-]{20,}"
+    ),
+]
 
 
 def run(cmd: list[str], *, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess[str]:
@@ -213,6 +231,14 @@ def deny_reason(path: str) -> str | None:
         return "denylisted path component"
     if path.endswith((".env", ".secret", ".secrets")):
         return "secret-like file suffix"
+    return None
+
+
+def maintainer_only_package_reason(path: str) -> str | None:
+    if path in MAINTAINER_ONLY_PACKAGE_EXACT:
+        return "maintainer-only release-engineering file"
+    if any(path.startswith(prefix) for prefix in MAINTAINER_ONLY_PACKAGE_PREFIXES):
+        return "maintainer-only release-engineering path"
     return None
 
 
@@ -451,18 +477,36 @@ def make_tarball(release_root: Path, tarball: Path, *, dry_run: bool, allow_lega
 def audit_release(release_root: Path, *, dry_run: bool) -> None:
     if dry_run:
         return
-    denied = [str(path.relative_to(release_root)) for path in release_root.rglob("*") if deny_reason(str(path.relative_to(release_root)))]
-    if denied:
-        raise RuntimeError("release contains denied paths: " + ", ".join(sorted(denied)))
-    result = run([sys.executable, "scripts/secret-scan.py", "--include-untracked"], cwd=release_root)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "release secret scan failed")
-    public_audit = run(
-        [sys.executable, "scripts/public-release-audit.py", "--include-untracked", "--enforce-public-surface"],
-        cwd=release_root,
-    )
-    if public_audit.returncode != 0:
-        raise RuntimeError(public_audit.stderr.strip() or public_audit.stdout.strip() or "release public audit failed")
+    findings: list[str] = []
+    for path in sorted(release_root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(release_root))
+        for reason in (deny_reason(rel), maintainer_only_package_reason(rel)):
+            if reason:
+                findings.append(f"{reason}: {rel}")
+        findings.extend(scan_package_file_for_secrets(release_root, path))
+    if findings:
+        sample = "; ".join(findings[:20])
+        suffix = "" if len(findings) <= 20 else f"; ... ({len(findings)} total)"
+        raise RuntimeError("release package audit failed: " + sample + suffix)
+
+
+def scan_package_file_for_secrets(release_root: Path, path: Path) -> list[str]:
+    rel = str(path.relative_to(release_root))
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return [f"cannot read {rel}: {exc}"]
+    if b"\0" in data[:4096]:
+        return []
+    text = data.decode("utf-8", errors="replace")
+    findings: list[str] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        for pattern in PACKAGE_SECRET_VALUE_PATTERNS:
+            if pattern.search(line):
+                findings.append(f"possible secret: {rel}:{index}")
+    return findings
 
 
 def main() -> int:
