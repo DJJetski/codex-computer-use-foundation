@@ -5,8 +5,9 @@
 <h1 align="center">Codex Computer Use Foundation</h1>
 
 <p align="center">
-  <strong>Repair and validation kit for native OpenAI Codex Computer Use on macOS.</strong><br />
-  Use it when Codex is installed, but the official native Computer Use path is missing, timing out, or failing fresh-thread discovery.
+  <strong>Fix native OpenAI Codex Computer Use when it is missing or broken on macOS.</strong><br />
+  Use this when Codex opens normally, but Computer Use tools do not appear,
+  time out, or cannot control Mac apps.
 </p>
 
 <p align="center">
@@ -20,18 +21,46 @@
 </p>
 
 <p align="center">
-  <img src="assets/foundation-overview.svg" alt="Foundation repair flow: detect broken native Computer Use, repair routing, prove native operation, and ship a sanitized release package." width="1200" height="720" />
+  <img src="assets/foundation-overview.svg" alt="Computer Use Foundation explains the problem, repairs the official Codex Computer Use plugin path, verifies native control, and ships a clean public release package." width="1200" height="630" />
 </p>
 
-## At A Glance
+## Why This Exists
 
-| Signal | What It Means |
+Codex Computer Use should let Codex inspect the Mac desktop, list apps, click,
+type, scroll, drag, and press keys through the official native OpenAI Computer
+Use plugin.
+
+On some Macs that native path breaks. Codex itself may still launch, but the
+Computer Use tools are missing, hidden, timing out, returning transport errors,
+or failing in fresh threads. The result is confusing: Codex looks installed,
+but it cannot actually control apps through native Computer Use.
+
+Codex Computer Use Foundation repairs that local Codex routing and validates
+that the official native path works again. It does not replace Codex, patch the
+Codex app bundle, bypass macOS privacy permissions, or hide AppleScript,
+screenshots, browser automation, Keyboard Maestro, `cliclick`, or VPN as fake
+Computer Use.
+
+## What This Project Does
+
+| Step | Plain-English Result |
 | --- | --- |
-| `plugin-only` | Codex discovers Computer Use through the bundled plugin, not direct duplicate MCP aliases. |
-| `exec launcher` | The launcher preserves the Codex AppServer, AppleEvent, and Mach rendezvous by `exec`ing the native client in the same process. |
-| `fresh smoke` | Success requires current native MCP evidence, not just config that looks right. |
-| `fallback_used=false` | AppleScript, Accessibility, screenshots, `cliclick`, Keyboard Maestro, Playwright, and VPN are not hidden inside the native MCP path. |
-| `public release drill` | The published tarball is install-tested like a downloaded release, with a SHA256 sidecar. |
+| Detect | Finds broken Computer Use discovery, disabled bundled plugin state, stale clients, bad shims, and duplicate MCP routing. |
+| Repair | Restores the official Codex Computer Use plugin path under the current user's `$HOME/.codex`. |
+| Verify | Proves native Computer Use works with fresh evidence, instead of trusting config that merely looks correct. |
+| Package | Builds a sanitized public release tarball with install scripts, docs, tests, and a SHA256 checksum. |
+| Keep Boundaries Clear | Keeps fallback automation separate so users know whether they are using real native Codex Computer Use. |
+
+## Common Search Terms
+
+This project is meant for failures people describe as "Codex Computer Use not
+working on macOS", "OpenAI Codex Computer Use missing", "Computer Use tools not
+showing up", "Codex cannot click or type", "Codex can see the screen but cannot
+control the app", "Codex MCP Computer Use not found", "`computer_use` tools
+missing", `mcp__computer_use__` missing, `tool_search` not exposing
+`computer-use`, `SkyComputerUseClient mcp` timing out, `Transport closed`,
+`procNotFound`, stale native smoke, duplicate native MCP clients, or native
+Computer Use failing after a Codex, plugin, or macOS update.
 
 ## Quick Install
 
@@ -69,10 +98,9 @@ brittle coordinates, Codex talks to the native Computer Use MCP server. That
 native server keeps the Codex AppServer, AppleEvent, and Mach rendezvous needed
 for real Mac control.
 
-In this repo, "second mouse" means the native path has proven GUI-action
-evidence from the Codex MCP context, not a fallback script pretending to be
-native. The guard reports full success only when fresh native smoke verifies
-real native operations and `second_mouse_verified=true`.
+For maintainers, the verification checks require fresh native GUI evidence
+from the Codex MCP context. That keeps the project honest: a fallback script
+does not count as native Computer Use.
 
 For a plain-language overview, read
 [`docs/WHAT-IS-COMPUTER-USE.md`](docs/WHAT-IS-COMPUTER-USE.md).
@@ -99,22 +127,6 @@ targets the failures people hit in real Codex sessions:
 
 It does not patch `/Applications/Codex.app`, bypass macOS privacy permissions,
 install VPN routing, add hidden GUI fallbacks, or upload local state.
-
-<details>
-<summary>Search Terms And Failure Symptoms</summary>
-
-Common ways this shows up include "Codex Computer Use not working on macOS",
-"OpenAI Codex Computer Use missing", "Computer Use tools not showing up",
-"Codex cannot click or type", "Codex can see the screen but cannot control the
-app", "Codex MCP Computer Use not found", "`computer_use` tools missing",
-`mcp__computer_use__` missing or not found, `tool_search` not exposing
-`computer-use`, `tools/list` not showing Computer Use, `SkyComputerUseClient mcp`
-timing out or hanging, `SkyComputerUseService` first-use prompts blocking
-setup, `procNotFound`, duplicate native MCP clients, stale native smoke, and
-native "second mouse" verification failing after Codex, plugin, or macOS
-changes.
-
-</details>
 
 ## Native Path, Not Fallback Automation
 

@@ -1,55 +1,39 @@
 <svg width="2400" height="840" viewBox="0 0 1200 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" text-rendering="geometricPrecision">
   <title id="title">Codex Computer Use Foundation</title>
-  <desc id="desc">A dark technical header for a native Codex Computer Use repair and validation kit on macOS.</desc>
+  <desc id="desc">A dark technical header explaining that this project repairs native Codex Computer Use on Macs where the official Computer Use path is missing or broken.</desc>
 
   <defs>
     <linearGradient id="panel" x1="0" y1="0" x2="1200" y2="420" gradientUnits="userSpaceOnUse">
       <stop stop-color="#090D10"/>
-      <stop offset="1" stop-color="#0C1216"/>
+      <stop offset="1" stop-color="#0B1115"/>
     </linearGradient>
-    <linearGradient id="signal" x1="158" y1="108" x2="1042" y2="312" gradientUnits="userSpaceOnUse">
+    <linearGradient id="accent" x1="190" y1="248" x2="1010" y2="248" gradientUnits="userSpaceOnUse">
       <stop stop-color="#75F4D4"/>
       <stop offset="0.52" stop-color="#F6C766"/>
       <stop offset="1" stop-color="#FF5C8A"/>
     </linearGradient>
-    <filter id="soft" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="16" stdDeviation="28" flood-color="#000000" flood-opacity="0.34"/>
+    <filter id="soft" x="-12%" y="-12%" width="124%" height="124%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#000000" flood-opacity="0.32"/>
     </filter>
   </defs>
 
-  <rect width="1200" height="420" rx="34" fill="url(#panel)" />
-  <rect x="1" y="1" width="1198" height="418" rx="33" stroke="#2A3440" stroke-width="2" />
+  <rect width="1200" height="420" rx="34" fill="url(#panel)"/>
+  <rect x="1" y="1" width="1198" height="418" rx="33" stroke="#2A3440" stroke-width="2"/>
 
-  <g opacity="0.32">
-    <path d="M88 78H244M956 78H1112M88 342H244M956 342H1112" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
-    <path d="M118 118H220M980 118H1082M118 302H220M980 302H1082" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
-    <path d="M600 36V86M600 334V384M334 210H384M816 210H866" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
+  <g opacity="0.28">
+    <path d="M86 78H230M970 78H1114M86 342H230M970 342H1114" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
+    <path d="M600 48V92M600 328V372" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
   </g>
 
   <g filter="url(#soft)">
-    <rect x="154" y="96" width="892" height="228" rx="28" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
-    <path d="M210 248C242 248 244 186 274 186C304 186 306 284 336 284C366 284 368 158 398 158C428 158 430 230 462 230C494 230 496 186 528 186C560 186 562 256 594 256C626 256 628 170 660 170C692 170 694 246 726 246C758 246 760 194 792 194C824 194 826 268 858 268C890 268 892 168 924 168C956 168 958 214 990 214" stroke="url(#signal)" stroke-width="6" stroke-linecap="round"/>
-    <path d="M210 248C242 248 244 186 274 186C304 186 306 284 336 284C366 284 368 158 398 158C428 158 430 230 462 230C494 230 496 186 528 186C560 186 562 256 594 256C626 256 628 170 660 170C692 170 694 246 726 246C758 246 760 194 792 194C824 194 826 268 858 268C890 268 892 168 924 168C956 168 958 214 990 214" stroke="#75F4D4" stroke-width="1.5" stroke-linecap="round" opacity="0.35"/>
+    <rect x="144" y="82" width="912" height="256" rx="30" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <rect x="174" y="112" width="852" height="196" rx="24" fill="#091113"/>
+    <path d="M204 260C238 260 242 212 274 212C306 212 310 282 342 282C374 282 378 196 410 196C442 196 446 246 478 246C510 246 514 224 546 224C578 224 582 262 614 262C646 262 650 204 682 204C714 204 718 238 750 238C782 238 786 214 818 214C850 214 854 256 886 256C918 256 922 188 954 188C986 188 990 222 1022 222" stroke="url(#accent)" stroke-width="5" stroke-linecap="round" opacity="0.54"/>
   </g>
 
-  <g>
-    <text x="600" y="146" text-anchor="middle" fill="#75F4D4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="850" letter-spacing="4">NATIVE MAC CONTROL</text>
-    <text x="600" y="190" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="48" font-weight="900">Codex Computer Use</text>
-    <text x="600" y="237" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="42" font-weight="900">Foundation</text>
-    <text x="600" y="282" text-anchor="middle" fill="#9BAAB5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="650">Repair the official plugin path. Prove fresh native smoke. Keep fallbacks out.</text>
-  </g>
-
-  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="800">
-    <rect x="90" y="42" width="172" height="44" rx="22" fill="#10181D" stroke="#31404A" stroke-width="2"/>
-    <circle cx="116" cy="64" r="6" fill="#75F4D4"/>
-    <text x="135" y="70" fill="#F6F8FB">plugin-only</text>
-
-    <rect x="466" y="342" width="268" height="44" rx="22" fill="#10181D" stroke="#31404A" stroke-width="2"/>
-    <circle cx="492" cy="364" r="6" fill="#F6C766"/>
-    <text x="511" y="370" fill="#F6F8FB">second_mouse_verified=true</text>
-
-    <rect x="938" y="42" width="172" height="44" rx="22" fill="#10181D" stroke="#31404A" stroke-width="2"/>
-    <circle cx="964" cy="64" r="6" fill="#FF5C8A"/>
-    <text x="983" y="70" fill="#F6F8FB">fallback-free</text>
-  </g>
+  <rect x="224" y="108" width="752" height="184" rx="26" fill="#0B1115" opacity="0.92"/>
+  <text x="600" y="151" text-anchor="middle" fill="#75F4D4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="850" letter-spacing="4">MACOS REPAIR KIT</text>
+  <text x="600" y="202" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="50" font-weight="900">Codex Computer Use</text>
+  <text x="600" y="250" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="42" font-weight="900">Foundation</text>
+  <text x="600" y="295" text-anchor="middle" fill="#B8C4CC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="700">Repairs missing or broken native Computer Use in Codex.</text>
 </svg>
