@@ -914,7 +914,16 @@ class FoundationTests(unittest.TestCase):
     def test_readme_public_surface_is_user_first_and_text_only(self) -> None:
         readme = repo_path("README.md").read_text(encoding="utf-8")
         first_screen = readme[:2500]
+        fallback_section = readme[
+            readme.index("## Why Native Computer Use Matters") : readme.index("## Quick Install")
+        ]
         self.assertIn("Repair native OpenAI Codex Computer Use", first_screen)
+        self.assertIn("Why Native Computer Use Matters", first_screen)
+        for term in ["Haindy", "`cliclick`", "AppleScript", "Keyboard Maestro", "screenshots", "Playwright"]:
+            self.assertIn(term, fallback_section)
+        self.assertIn("weaker as replacements", fallback_section)
+        self.assertIn("repairs and verifies the native OpenAI Codex Computer Use path", fallback_section)
+        self.assertIn("fallback_used=false", fallback_section)
         self.assertIn("git clone https://github.com/DJJetski/codex-computer-use-foundation.git", first_screen)
         self.assertNotIn("<img", first_screen)
         self.assertNotIn("foundation-" + "overview.svg", readme)

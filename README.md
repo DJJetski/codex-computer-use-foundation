@@ -27,6 +27,24 @@ Codex cannot control Mac apps through native tools such as `list_apps`,
 This can help both machines where Computer Use worked before and machines where
 native Computer Use has never worked after installing Codex.
 
+## Why Native Computer Use Matters
+
+Native Computer Use is not just a visible mouse script. When it works, Codex can
+discover apps, inspect app state, and call native tools such as `list_apps`,
+`get_app_state`, `click`, `type_text`, `press_key`, `scroll`, and `drag`
+through the official Computer Use MCP path.
+
+Fallbacks such as Haindy, `cliclick`, AppleScript, Accessibility scripting,
+Keyboard Maestro, screenshots, and Playwright can be useful when a user
+explicitly chooses an operator fallback. They are weaker as replacements because
+they can depend on screen coordinates, frontmost-app focus, extra permissions,
+browser or profile state, or signals Codex cannot verify as native MCP
+evidence.
+
+This project repairs and verifies the native OpenAI Codex Computer Use path
+instead of disguising fallbacks as Computer Use. Full success requires fresh
+native evidence and `fallback_used=false`.
+
 ## Quick Install
 
 Requirements:
