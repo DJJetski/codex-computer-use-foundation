@@ -11,6 +11,23 @@ Public wording should stay centered on the user problem: Codex is installed on
 a Mac, but native Computer Use is not working yet. The package exists to repair
 and validate that native path, not to advertise a separate automation framework.
 
+## Repository Presentation
+
+The GitHub repository page should be easy to understand before it becomes
+technical. Start the README with the text heading `Codex Computer Use
+Foundation`, the short description, and the navigation links. Do not put a
+duplicated hero image above that heading.
+
+Visual assets should follow the dark technical style used by this project, but
+they must remain readable at GitHub's rendered width. Keep text on calm
+background panels, use balanced spacing, keep labels inside their boxes, and
+prefer clear plain-language copy over internal status terms. Do not ship SVGs
+with clipped text, asymmetric card padding, or tiny badge strings that explain
+implementation details before the user understands the problem.
+
+The first public diagram is for users, not maintainers. Its flow should end in
+using Codex Computer Use again, not in "release" or packaging language.
+
 ## GitHub Release Readiness
 
 The repository includes `SECURITY.md`, `CONTRIBUTING.md`, GitHub issue and pull
@@ -33,15 +50,28 @@ release, enable the applicable security features for the target repository:
 private vulnerability reporting or another private security contact, secret
 scanning, push protection, Dependabot alerts, branch protection or rulesets for
 `main`, and CodeQL/code scanning when the repository visibility and plan support
-it. For this repository, `main` protection is a release gate: block force
-pushes and deletions, require the `Release safety` CI job, require pull-request
-review, and require conversation resolution for normal changes.
+it.
+
+For this repository, publication should match a solo-maintainer workflow. The
+public can download, inspect, fork, and propose changes, but direct write access
+stays limited to the owner or explicitly trusted collaborators. Do not require
+a second approving reviewer for maintainer-owned updates. Do not configure a
+required status check that blocks direct maintainer pushes before GitHub can
+create the new commit's check run. Local hooks and CI should still run the
+safety checks, but they should not turn normal owner publishing into a
+multi-person approval process.
 
 ## Public-Safety Rules
 
 - Keep personal home paths, local usernames, personal emails, machine snapshots,
   rollback bundles, raw `$HOME/.codex` state, OAuth data, cookies, and smoke
   JSON out of Git.
+- Keep commit identities, release notes, generated tarballs, and public docs
+  free of the maintainer's personal name, home path, local username, and
+  personal email address.
+- Protect downloaders: publish only the installable source surface, scripts,
+  docs, tests, release assets, and checksums that a user can inspect and run
+  without receiving local machine state or hidden automation.
 - Keep LaunchAgent labels generic:
   `io.github.codex-computer-use-foundation.guard` and
   `io.github.codex-computer-use-foundation.dialog-autopilot`.

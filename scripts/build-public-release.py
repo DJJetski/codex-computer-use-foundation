@@ -42,7 +42,6 @@ PUBLIC_EXACT = {
     "LICENSE",
     "README.md",
     "SECURITY.md",
-    "assets/foundation-header.svg",
     "assets/foundation-overview.svg",
     "assets/foundation-release-card.svg",
     "docs/ARCHITECTURE.md",

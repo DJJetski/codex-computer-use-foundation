@@ -1,65 +1,54 @@
-<svg width="2400" height="1260" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" text-rendering="geometricPrecision">
+<svg width="2400" height="1320" viewBox="0 0 1200 660" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" text-rendering="geometricPrecision">
   <title id="title">Why Computer Use Foundation Exists</title>
-  <desc id="desc">A simple four step explanation: native Computer Use can disappear or fail on some Macs; this project finds the broken routing, repairs the official plugin path, proves native control, and packages the repair for release.</desc>
+  <desc id="desc">A simple four step explanation: native Computer Use can disappear or fail on some Macs; this project detects the problem, repairs the official plugin path, verifies native control, and gets Codex ready to use Computer Use again.</desc>
 
   <defs>
-    <linearGradient id="panel" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+    <linearGradient id="panel" x1="0" y1="0" x2="1200" y2="660" gradientUnits="userSpaceOnUse">
       <stop stop-color="#090D10"/>
       <stop offset="1" stop-color="#0B1115"/>
     </linearGradient>
-    <linearGradient id="line" x1="190" y1="354" x2="1010" y2="354" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#75F4D4"/>
-      <stop offset="0.52" stop-color="#F6C766"/>
-      <stop offset="1" stop-color="#FF5C8A"/>
-    </linearGradient>
-    <filter id="soft" x="-12%" y="-12%" width="124%" height="124%" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.28"/>
+    <filter id="soft" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="22" flood-color="#000000" flood-opacity="0.28"/>
     </filter>
   </defs>
 
-  <rect width="1200" height="630" rx="34" fill="url(#panel)"/>
-  <rect x="1" y="1" width="1198" height="628" rx="33" stroke="#2A3440" stroke-width="2"/>
+  <rect width="1200" height="660" rx="34" fill="url(#panel)"/>
+  <rect x="1" y="1" width="1198" height="658" rx="33" stroke="#2A3440" stroke-width="2"/>
 
-  <g opacity="0.24">
-    <path d="M88 78H222M978 78H1112M88 552H222M978 552H1112" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
-    <path d="M600 54V104M600 526V576" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
+  <g opacity="0.23">
+    <path d="M88 78H222M978 78H1112M88 582H222M978 582H1112" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
+    <path d="M600 54V104M600 556V606" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
   </g>
 
-  <text x="600" y="92" text-anchor="middle" fill="#75F4D4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="19" font-weight="850" letter-spacing="4">WHAT THIS FIXES</text>
-  <text x="600" y="142" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="43" font-weight="900">When Codex Computer Use stops working</text>
-  <text x="600" y="181" text-anchor="middle" fill="#B8C4CC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="22" font-weight="700">Some Macs lose the official Computer Use tools, even when Codex itself still opens.</text>
-
-  <path d="M208 354H992" stroke="url(#line)" stroke-width="6" stroke-linecap="round"/>
+  <text x="600" y="92" text-anchor="middle" fill="#75F4D4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="850" letter-spacing="4">WHAT THIS FIXES</text>
+  <text x="600" y="143" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="39" font-weight="900">When Codex Computer Use stops working</text>
+  <text x="600" y="183" text-anchor="middle" fill="#B8C4CC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="700">Some Macs lose the official Computer Use tools, even when Codex itself still opens.</text>
 
   <g filter="url(#soft)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <rect x="72" y="250" width="232" height="210" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
-    <text x="104" y="304" fill="#75F4D4" font-size="31" font-weight="900">1</text>
-    <text x="144" y="304" fill="#F6F8FB" font-size="27" font-weight="900">Detect</text>
-    <text x="104" y="351" fill="#B8C4CC" font-size="21" font-weight="700">Computer Use tools</text>
-    <text x="104" y="381" fill="#B8C4CC" font-size="21" font-weight="700">are missing, hidden,</text>
-    <text x="104" y="411" fill="#B8C4CC" font-size="21" font-weight="700">or timing out.</text>
+    <rect x="106" y="232" width="448" height="158" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <text x="330" y="278" text-anchor="middle" fill="#75F4D4" font-size="34" font-weight="900">1</text>
+    <text x="330" y="318" text-anchor="middle" fill="#F6F8FB" font-size="30" font-weight="900">Detect</text>
+    <text x="330" y="354" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">Find missing tools, timeouts,</text>
+    <text x="330" y="382" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">and bad Codex routing.</text>
 
-    <rect x="348" y="250" width="232" height="210" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
-    <text x="380" y="304" fill="#F6C766" font-size="31" font-weight="900">2</text>
-    <text x="420" y="304" fill="#F6F8FB" font-size="27" font-weight="900">Repair</text>
-    <text x="380" y="351" fill="#B8C4CC" font-size="21" font-weight="700">Restore the official</text>
-    <text x="380" y="381" fill="#B8C4CC" font-size="21" font-weight="700">OpenAI plugin path</text>
-    <text x="380" y="411" fill="#B8C4CC" font-size="21" font-weight="700">inside Codex.</text>
+    <rect x="646" y="232" width="448" height="158" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <text x="870" y="278" text-anchor="middle" fill="#F6C766" font-size="34" font-weight="900">2</text>
+    <text x="870" y="318" text-anchor="middle" fill="#F6F8FB" font-size="30" font-weight="900">Repair</text>
+    <text x="870" y="354" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">Restore the official plugin path</text>
+    <text x="870" y="382" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">that Codex expects on macOS.</text>
 
-    <rect x="624" y="250" width="232" height="210" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
-    <text x="656" y="304" fill="#75F4D4" font-size="31" font-weight="900">3</text>
-    <text x="696" y="304" fill="#F6F8FB" font-size="27" font-weight="900">Verify</text>
-    <text x="656" y="351" fill="#B8C4CC" font-size="21" font-weight="700">Prove Codex can</text>
-    <text x="656" y="381" fill="#B8C4CC" font-size="21" font-weight="700">see apps, click, type,</text>
-    <text x="656" y="411" fill="#B8C4CC" font-size="21" font-weight="700">and use native tools.</text>
+    <rect x="106" y="420" width="448" height="158" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <text x="330" y="466" text-anchor="middle" fill="#75F4D4" font-size="34" font-weight="900">3</text>
+    <text x="330" y="506" text-anchor="middle" fill="#F6F8FB" font-size="30" font-weight="900">Verify</text>
+    <text x="330" y="542" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">Prove Codex can see apps,</text>
+    <text x="330" y="570" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">click, type, and use native tools.</text>
 
-    <rect x="900" y="250" width="232" height="210" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
-    <text x="932" y="304" fill="#FF5C8A" font-size="31" font-weight="900">4</text>
-    <text x="972" y="304" fill="#F6F8FB" font-size="27" font-weight="900">Release</text>
-    <text x="932" y="351" fill="#B8C4CC" font-size="21" font-weight="700">Ship a clean public</text>
-    <text x="932" y="381" fill="#B8C4CC" font-size="21" font-weight="700">tarball people can</text>
-    <text x="932" y="411" fill="#B8C4CC" font-size="21" font-weight="700">download and install.</text>
+    <rect x="646" y="420" width="448" height="158" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <text x="870" y="466" text-anchor="middle" fill="#FF5C8A" font-size="34" font-weight="900">4</text>
+    <text x="870" y="506" text-anchor="middle" fill="#F6F8FB" font-size="30" font-weight="900">Use Again</text>
+    <text x="870" y="542" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">Return to native Computer Use</text>
+    <text x="870" y="570" text-anchor="middle" fill="#B8C4CC" font-size="20" font-weight="700">after the checks pass.</text>
   </g>
 
-  <text x="600" y="536" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="850">No hidden AppleScript, screenshots, VPN, or browser-control fallback inside the native path.</text>
+  <text x="600" y="624" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="850">No hidden AppleScript, screenshots, VPN, or browser-control fallback inside the native path.</text>
 </svg>

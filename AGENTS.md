@@ -36,6 +36,18 @@ Important invariants:
 - If a fresh thread does not show `mcp__computer_use__`, try `tool_search` for
   `computer-use list_apps get_app_state click type_text press_key` before
   declaring native tool exposure unavailable.
+- README and release presentation should stay simple, stylish, and symmetric.
+  Start the GitHub page with the centered text heading and short explanation,
+  not a duplicated hero image. SVG text must sit on quiet backgrounds, stay
+  inside its visual boxes with balanced left/right padding, and avoid tiny
+  technical status badges in the first-screen explanation. Public first-screen
+  graphics are for users, not maintainers: describe detecting, repairing,
+  verifying, and using Computer Use again; keep release/package wording for
+  maintainer-only sections.
+- This is a solo-maintainer public repo. Other users may download, inspect,
+  fork, or open PRs, but they should not have direct write access unless the
+  owner grants it. Do not treat lack of a second reviewer as a blocker for
+  maintainer-requested pushes.
 
 Verification before completion:
 
@@ -48,5 +60,7 @@ scripts/public-release-audit.py --include-untracked --all-refs --enforce-public-
 git status --short --branch --untracked-files=all
 ```
 
-Commit only task-owned files. Push only when the user asked for GitHub-backed
-cloneability or explicitly requested a push.
+Commit only task-owned files. Push directly to `main` when the user asks to
+update the GitHub page/release/repo. Keep personal paths, local usernames,
+personal emails, secrets, and unsafe generated artifacts out of Git and release
+packages.

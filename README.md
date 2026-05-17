@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/foundation-header.svg" alt="Codex Computer Use Foundation - native Codex Computer Use repair and validation kit for macOS." width="1200" height="420" />
-</p>
-
 <h1 align="center">Codex Computer Use Foundation</h1>
 
 <p align="center">
@@ -13,7 +9,7 @@
 <p align="center">
   <a href="#quick-install">Quick Install</a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
-  <a href="docs/INSTALL.md">Release Install</a>
+  <a href="docs/INSTALL.md">Install Guide</a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="docs/RUNBOOK.md">Runbook</a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
@@ -21,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/foundation-overview.svg" alt="Computer Use Foundation explains the problem, repairs the official Codex Computer Use plugin path, verifies native control, and ships a clean public release package." width="1200" height="630" />
+  <img src="assets/foundation-overview.svg" alt="Computer Use Foundation explains the problem, repairs the official Codex Computer Use plugin path, verifies native control, and gets Codex ready to use Computer Use again." width="1200" height="660" />
 </p>
 
 ## Why This Exists
@@ -48,7 +44,7 @@ Computer Use.
 | Detect | Finds broken Computer Use discovery, disabled bundled plugin state, stale clients, bad shims, and duplicate MCP routing. |
 | Repair | Restores the official Codex Computer Use plugin path under the current user's `$HOME/.codex`. |
 | Verify | Proves native Computer Use works with fresh evidence, instead of trusting config that merely looks correct. |
-| Package | Builds a sanitized public release tarball with install scripts, docs, tests, and a SHA256 checksum. |
+| Use Again | Leaves Codex ready to use native Computer Use after the repair passes verification. |
 | Keep Boundaries Clear | Keeps fallback automation separate so users know whether they are using real native Codex Computer Use. |
 
 ## Common Search Terms
