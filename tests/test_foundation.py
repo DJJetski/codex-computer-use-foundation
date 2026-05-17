@@ -371,6 +371,25 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(state["state"], "structural_ok_needs_fresh_native_smoke")
         self.assertIn("fresh Codex thread", state["next_step"])
 
+    def test_operational_state_ready_requires_live_thread_probe(self) -> None:
+        guard = load_guard_module()
+        state = guard._operational_state(
+            structural_ok=True,
+            health_layers={
+                "configured": True,
+                "discoverable": True,
+                "runtime_ready": True,
+                "mcp_client_ownership": True,
+                "appserver_rendezvous": True,
+                "operational": True,
+                "second_mouse_verified": True,
+            },
+            native_smoke={"failure_class": ""},
+        )
+        self.assertEqual(state["state"], "native_computer_use_ready")
+        self.assertIn("fresh Codex thread", state["next_step"])
+        self.assertIn("mcp__computer_use__.list_apps succeeds", state["next_step"])
+
     def test_guard_health_fails_closed_on_duplicate_mcp_clients(self) -> None:
         guard = load_guard_module()
         health = guard._health_layers(
@@ -612,19 +631,84 @@ class FoundationTests(unittest.TestCase):
             guard._press_key_reported_no_windows(events, app="com.apple.TextEdit", key="super+w")
         )
 
-    def test_native_smoke_uses_safari_input_not_textedit_save(self) -> None:
+    def test_press_key_reported_text_accepts_calculator_app_quit_cleanup(self) -> None:
+        guard = load_guard_module()
+        events = [
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "server": "computer-use",
+                    "tool": "press_key",
+                    "arguments": {"app": "com.apple.calculator", "key": "super+w"},
+                    "status": "failed",
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Computer Use server error -10005: App quit",
+                            }
+                        ]
+                    },
+                },
+            }
+        ]
+
+        self.assertTrue(
+            guard._press_key_reported_text(
+                events, app="com.apple.calculator", key="super+w", needle="App quit"
+            )
+        )
+
+    def test_native_smoke_uses_calculator_without_textedit_save(self) -> None:
         guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
         smoke_body = guard_source[
             guard_source.index("success_line =")
             : guard_source.index('cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]')
         ]
 
-        self.assertIn("Native Smoke Input", smoke_body)
-        self.assertIn("Call computer-use/type_text with app com.apple.Safari", smoke_body)
-        self.assertIn('["/usr/bin/open", "-g", "-a", "Safari", click_url]', guard_source)
-        self.assertIn("Safari may not be the frontmost app", smoke_body)
+        self.assertIn("Calculator may not be the frontmost app", smoke_body)
+        self.assertIn("return focus to Codex", smoke_body)
+        self.assertIn("com.apple.calculator", smoke_body)
+        self.assertIn("Call computer-use/type_text with app com.apple.calculator", smoke_body)
+        self.assertIn("do not use x/y coordinate clicks", smoke_body)
+        self.assertIn("Calculator digit 7 button", smoke_body)
+        self.assertIn("Calculator digit 8 button", smoke_body)
+        self.assertIn("line's leading number as element_index", smoke_body)
+        self.assertIn('["/usr/bin/open", "-g", "-a", "Calculator"]', guard_source)
+        self.assertIn('["/usr/bin/open", str(OPENAI_CODEX_APP)]', guard_source)
+        self.assertNotIn("Native Smoke Button", smoke_body)
+        self.assertNotIn("Native Smoke Input", smoke_body)
+        self.assertNotIn("com.apple.Safari", smoke_body)
         self.assertNotIn("com.apple.TextEdit", smoke_body)
         self.assertNotIn("super+s", smoke_body)
+
+    def test_native_smoke_detects_coordinate_click_attempts(self) -> None:
+        guard = load_guard_module()
+        events = [
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "server": "computer-use",
+                    "tool": "click",
+                    "arguments": {"app": "com.apple.calculator", "x": 404, "y": 356},
+                    "status": "failed",
+                },
+            },
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "server": "computer-use",
+                    "tool": "click",
+                    "arguments": {"app": "com.apple.calculator", "element_index": "42"},
+                    "status": "completed",
+                },
+            },
+        ]
+
+        self.assertEqual(guard._coordinate_click_attempt_count(events), 1)
 
     def test_mcp_tool_result_contains_finds_safari_token_evidence(self) -> None:
         guard = load_guard_module()
@@ -878,9 +962,9 @@ class FoundationTests(unittest.TestCase):
                 "list_apps_completed": 2,
                 "get_app_state_completed": 2,
                 "click_completed": 2,
-                "safari_click_received": True,
-                "safari_type_received": True,
-                "safari_input_verified": True,
+                "coordinate_click_attempts": 0,
+                "calculator_click_verified": True,
+                "calculator_display_verified": True,
                 "cleanup_keypress_ok": True,
                 "smoke_cleanup": {"current_removed": True, "errors": []},
             },
@@ -890,15 +974,17 @@ class FoundationTests(unittest.TestCase):
         self.assertTrue(all(item["ok"] for item in checks), checks)
 
         for key, check_name in [
-            ("safari_input_verified", "native smoke Safari input verified"),
-            ("safari_click_received", "native smoke Safari click received"),
-            ("safari_type_received", "native smoke Safari type received"),
+            ("coordinate_click_attempts", "native smoke coordinate_click_attempts=0"),
+            ("calculator_click_verified", "native smoke Calculator click verified"),
+            ("calculator_display_verified", "native smoke Calculator display verified"),
             ("cleanup_keypress_ok", "native smoke cleanup keypress ok"),
             ("fallback_used", "native smoke fallback_used=false"),
         ]:
             with self.subTest(key=key):
                 weak_payload = json.loads(json.dumps(payload))
-                weak_payload["native_smoke"][key] = True if key == "fallback_used" else False
+                weak_payload["native_smoke"][key] = 1 if key == "coordinate_click_attempts" else (
+                    True if key == "fallback_used" else False
+                )
                 checks = verifier.guard_status_payload_checks(weak_payload, require_operational=True)
                 failed = [item["name"] for item in checks if not item["ok"]]
                 self.assertIn(check_name, failed)
@@ -1104,7 +1190,7 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue((package / "SECURITY.md").is_file())
             self.assertTrue((package / "docs/WHAT-IS-COMPUTER-USE.md").is_file())
             self.assertTrue((package / "docs/CAPABILITY-PARITY.md").is_file())
-            self.assertTrue((package / "docs/releases/v0.1.10.md").is_file())
+            self.assertTrue((package / "docs/releases/v0.1.11.md").is_file())
             self.assertTrue((package / ".github/FUNDING.yml").is_file())
             self.assertTrue((package / ".github/workflows/ci.yml").is_file())
             self.assertFalse((package / ".github/workflows/codeql.yml").exists())

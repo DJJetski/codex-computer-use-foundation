@@ -250,11 +250,12 @@ showed real MCP rendezvous.
 `second_mouse_verified=true` means the smoke proved native GUI action evidence,
 not just app listing.
 
-The smoke drives a local Safari-only test page with a button and text input.
-It opens that page in the background with `open -g`, targets Safari by bundle
-id instead of relying on the frontmost app, requires native `click` and
-`type_text` evidence, confirms the local page received both events, closes its
-own smoke tab where the native server allows it, and removes stale
+The smoke drives Calculator as a low-risk native app-state target. It opens
+Calculator in the background with `open -g`, returns focus to Codex when
+possible, targets Calculator by bundle id instead of relying on the frontmost
+app, requires native `click`, `type_text`, and `press_key` evidence, verifies
+the resulting display value, closes Calculator where the native server allows
+it, and removes stale
 `codex-cu-native-smoke-*.txt` temp files from older releases. Because it is a
 real native GUI proof, the native second pointer may still be visible during
 the short smoke run.
@@ -265,10 +266,12 @@ health. Full tool-surface parity is checked with native `tools/list`; the smoke
 then proves that the official route can perform safe real GUI actions without
 fallback automation.
 
-This non-frontmost Safari proof is deliberately narrower than a claim that
-Codex can operate any minimized, invisible, off-Space, Terminal, Codex, admin,
-security, privacy, network, or firewall UI. Those boundaries follow OpenAI's
-Computer Use app guidance and remain explicit operator territory.
+The payload records whether Calculator appeared frontmost during `list_apps`, so
+the non-frontmost part of the proof is visible instead of assumed. The proof is
+deliberately narrower than a claim that Codex can operate any minimized,
+invisible, off-Space, Terminal, Codex, admin, security, privacy, network, or
+firewall UI. Those boundaries follow OpenAI's Computer Use app guidance and
+remain explicit operator territory.
 
 Duplicate native MCP clients under one Codex AppServer parent are fail-closed
 health evidence. The guard cleans orphaned clients automatically. Full

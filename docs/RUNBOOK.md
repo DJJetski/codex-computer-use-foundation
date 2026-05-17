@@ -26,8 +26,11 @@ capabilities, read `docs/CAPABILITY-PARITY.md`.
    mcp__computer_use__.list_apps
    ```
 
-4. Continue only with native `mcp__computer_use__` tools for native-only tasks.
-5. Do not switch to `cliclick`, screenshots, AppleScript, Accessibility,
+4. Continue only if that native call succeeds. If it returns
+   `Transport closed`, the current thread has stale MCP transport state; run
+   full `ensure` if needed, then retry from a fresh Codex thread.
+5. Continue only with native `mcp__computer_use__` tools for native-only tasks.
+6. Do not switch to `cliclick`, screenshots, AppleScript, Accessibility,
    Keyboard Maestro, or browser automation unless the user explicitly chooses a
    fallback operator path.
 
@@ -88,6 +91,9 @@ Use this when:
 - Codex was updated
 
 Full `ensure` may run fresh native smoke if structural/runtime readiness exists.
+It can also replace duplicate or stale native MCP clients, so an already-open
+thread may keep a closed transport even after the installed route is healthy.
+When that happens, use a fresh Codex thread as the canonical post-repair proof.
 
 ## Fast Startup Repair
 
@@ -101,7 +107,7 @@ native operation by itself.
 ## Authoritative Smoke
 
 ```bash
-~/.codex/bin/codex-computer-use-guard fresh-smoke | jq '{ok,fresh,appserver_rendezvous,operational,second_mouse_verified,failure_class,fallback_used,list_apps_completed,get_app_state_completed,click_completed,safari_click_received,safari_type_received,safari_input_verified,cleanup_keypress_ok,smoke_cleanup,unstructured_stdout_lines}'
+~/.codex/bin/codex-computer-use-guard fresh-smoke | jq '{ok,fresh,appserver_rendezvous,operational,second_mouse_verified,failure_class,fallback_used,smoke_target,target_not_frontmost_verified,list_apps_completed,get_app_state_completed,click_completed,coordinate_click_attempts,calculator_click_verified,calculator_display_verified,cleanup_keypress_ok,smoke_cleanup,unstructured_stdout_lines}'
 ```
 
 Expected:
@@ -111,7 +117,11 @@ Expected:
 - `operational=true`
 - `second_mouse_verified=true`
 - `fallback_used=false`
-- `safari_input_verified=true`
+- `smoke_target=com.apple.calculator`
+- `target_not_frontmost_verified=true` when macOS honors the focus-restore step
+- `coordinate_click_attempts=0`
+- `calculator_click_verified=true`
+- `calculator_display_verified=true`
 - `cleanup_keypress_ok=true`
 - `smoke_cleanup.errors=[]`
 - `unstructured_stdout_lines=0`
@@ -191,9 +201,11 @@ treated as a real operational blocker, not a cosmetic diagnostic.
 ## Background Use And Second Pointer Expectations
 
 Healthy native Computer Use can target an allowed app without relying on the
-frontmost app. The release smoke proves this by opening a local Safari page
-with `open -g`, targeting Safari by bundle id, and requiring native click and
-type evidence with `fallback_used=false`.
+frontmost app. The release smoke attempts to prove this by opening Calculator
+with `open -g`, returning focus to Codex, targeting Calculator by bundle id,
+and requiring native click and type evidence with `fallback_used=false`. The
+payload records `target_not_frontmost_verified` so this distinction is visible
+instead of assumed.
 
 Do not treat that proof as permission to use fallback automation, and do not
 overread it as a guarantee for minimized windows, invisible windows, off-Space

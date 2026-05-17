@@ -24,6 +24,11 @@ The important distinction is:
   local repair layer is in place, but native operation still needs a full
   `ensure`, `tool_search`, or fresh Codex thread before it can be treated as
   current evidence.
+- `operational_state.state=native_computer_use_ready` means the installed route
+  has current native evidence. It does not prove that an already-open Codex
+  thread kept a live MCP transport after repair; that thread still needs a
+  successful `mcp__computer_use__.list_apps` call, or the user should open a
+  fresh Codex thread.
 
 The system must not report full success just because the config looks right.
 Full success requires real native calls and no duplicate native MCP clients
@@ -64,12 +69,15 @@ A release is healthy only after installing from the public release tree with
     "operational": true,
     "second_mouse_verified": true,
     "fallback_used": false,
+    "smoke_target": "com.apple.calculator",
+    "target_frontmost_seen": true,
+    "target_not_frontmost_verified": false,
     "list_apps_completed": 2,
     "get_app_state_completed": 2,
     "click_completed": 2,
-    "safari_click_received": true,
-    "safari_type_received": true,
-    "safari_input_verified": true,
+    "coordinate_click_attempts": 0,
+    "calculator_click_verified": true,
+    "calculator_display_verified": true,
     "cleanup_keypress_ok": true,
     "smoke_cleanup": {
       "current_removed": true,
@@ -92,6 +100,9 @@ Expected high-level result:
   newest client and removing older duplicate transports. Duplicate parent
   groups remain fail-closed evidence until `ensure`, explicit cleanup, or a
   thread restart removes them.
+- The Calculator smoke attempts to restore Codex focus before native actions,
+  but Computer Use 1.0.793 currently reports the Calculator target as
+  frontmost during the run. The value is recorded as evidence, not hidden.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 
@@ -152,6 +163,10 @@ computer-use
   `computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text`.
 - If `tool_search` exposes the namespace, prove native health with
   `mcp__computer_use__.list_apps`.
+- If `mcp__computer_use__` is visible but native calls return
+  `Transport closed`, treat the current thread as stale MCP transport state.
+  Do not use fallbacks as proof; run full `ensure` if needed and retry from a
+  fresh Codex thread.
 - If tools remain absent after `tool_search`, run
   `$HOME/.codex/bin/codex-computer-use-guard ensure`; if they still remain
   absent in that thread, report a native exposure blocker and use a fresh

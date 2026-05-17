@@ -66,10 +66,11 @@ scripts/install.py --yes --full-ensure
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
 ```
 
-`--full-ensure` runs a live native smoke test. It opens a local Safari test
-page in the background and targets Safari by bundle id, but it can still show
-Codex's native second pointer while it proves click and type operations. Run it
-when a short local GUI verification is acceptable.
+`--full-ensure` runs a live native smoke test. It opens Calculator in the
+background, returns focus to Codex when possible, targets Calculator by bundle
+id, and uses native app-state element indexes for the click targets. It can
+still show Codex's native second pointer while it proves click and type
+operations. Run it when a short local GUI verification is acceptable.
 
 If Codex is not installed at `/Applications/Codex.app`, pass the app path once:
 
@@ -161,6 +162,11 @@ If structural repair is healthy but native smoke is missing or stale, the guard
 fails closed and tells you to run full `ensure`, use `tool_search`, or open a
 fresh Codex thread.
 
+If the guard is healthy but the already-open thread returns `Transport closed`
+from `mcp__computer_use__`, treat that current thread as stale MCP state. Open a
+fresh Codex thread and prove the native path again with
+`mcp__computer_use__.list_apps`; do not switch to fallback automation.
+
 ## Native Tool Surface
 
 The guard does not treat a partial tool list as healthy. The native launcher
@@ -179,15 +185,15 @@ must expose this complete MCP surface:
 | `press_key` | Press keys and key chords. |
 | `type_text` | Type text through the native tool path. |
 
-The live smoke test intentionally exercises a safe subset on a local Safari
-test page. Tool-surface parity is checked separately with `tools/list`, so a
-missing `scroll`, `drag`, `set_value`, `select_text`, or secondary action tool
-fails discovery before full health can pass.
+The live smoke test intentionally exercises a safe subset in Calculator.
+Tool-surface parity is checked separately with `tools/list`, so a missing
+`scroll`, `drag`, `set_value`, `select_text`, or secondary action tool fails
+discovery before full health can pass.
 
 ## Fresh Thread Check
 
-After install, open a fresh Codex thread. If native tools are not visible yet,
-ask Codex to search for this exact tool surface:
+After install or repair, open a fresh Codex thread. If native tools are not
+visible yet, ask Codex to search for this exact tool surface:
 
 ```text
 computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text
@@ -206,6 +212,10 @@ $HOME/.codex/bin/codex-computer-use-guard ensure
 ```
 
 Then retry from a fresh Codex thread.
+
+If the namespace appears but `list_apps` returns `Transport closed`, the current
+thread loaded stale MCP transport state before repair completed. Run `ensure`
+if needed, then retry from a fresh Codex thread.
 
 ## Documentation
 

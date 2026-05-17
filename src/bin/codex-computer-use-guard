@@ -12,7 +12,6 @@ metadata, and the login LaunchAgent.
 from __future__ import annotations
 
 import fcntl
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import plistlib
@@ -22,11 +21,9 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 HOME = Path.home()
 CODEX_HOME = HOME / ".codex"
@@ -454,69 +451,6 @@ def _record_native_smoke_from_stdin() -> dict[str, Any]:
     return status
 
 
-def _start_native_smoke_click_server(
-    token: str,
-) -> tuple[str, threading.Event, threading.Event, ThreadingHTTPServer]:
-    clicked = threading.Event()
-    typed = threading.Event()
-    token_js = json.dumps(token)
-
-    class SmokeHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            if parsed.path == "/clicked":
-                values = parse_qs(parsed.query)
-                if values.get("token", [""])[0] == token:
-                    clicked.set()
-                self.send_response(204)
-                self.end_headers()
-                return
-            if parsed.path == "/typed":
-                values = parse_qs(parsed.query)
-                if values.get("token", [""])[0] == token:
-                    typed.set()
-                self.send_response(204)
-                self.end_headers()
-                return
-
-            body = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Codex Native Computer Use Smoke</title>
-  <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; }}
-    button, input {{ font-size: 18px; padding: 14px 18px; }}
-    input {{ display: block; margin-top: 18px; min-width: 520px; }}
-    #status, #typed-status {{ margin-top: 18px; font-size: 16px; }}
-  </style>
-</head>
-<body>
-  <h1>Codex Native Computer Use Smoke</h1>
-  <button id="native-smoke-button" onclick='document.getElementById("status").textContent="clicked"; fetch("/clicked?token=" + encodeURIComponent({token_js}), {{ cache: "no-store" }});'>Native Smoke Button</button>
-  <input id="native-smoke-input" aria-label="Native Smoke Input" autocomplete="off" spellcheck="false" oninput='if (this.value.includes({token_js})) {{ document.getElementById("typed-status").textContent="typed"; fetch("/typed?token=" + encodeURIComponent({token_js}), {{ cache: "no-store" }}); }}' />
-  <div id="status">ready</div>
-  <div id="typed-status">empty</div>
-</body>
-</html>
-"""
-            data = body.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, _format: str, *_args: object) -> None:
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), SmokeHandler)
-    thread = threading.Thread(target=server.serve_forever, name="codex-cu-native-smoke-http", daemon=True)
-    thread.start()
-    return f"http://127.0.0.1:{server.server_port}/?token={token}", clicked, typed, server
-
-
 def _codex_exec_json_events(stdout: str) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for line in stdout.splitlines():
@@ -563,6 +497,22 @@ def _mcp_tool_attempt_count(events: list[dict[str, Any]], tool: str) -> int:
     return count
 
 
+def _coordinate_click_attempt_count(events: list[dict[str, Any]]) -> int:
+    count = 0
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "mcp_tool_call" or item.get("server") != "computer-use" or item.get("tool") != "click":
+            continue
+        arguments = item.get("arguments")
+        if isinstance(arguments, dict) and "x" in arguments and "y" in arguments:
+            count += 1
+    return count
+
+
 def _press_key_event_matches(item: dict[str, Any], *, app: str, key: str) -> bool:
     if item.get("type") != "mcp_tool_call" or item.get("server") != "computer-use" or item.get("tool") != "press_key":
         return False
@@ -583,6 +533,10 @@ def _press_key_completed_for(events: list[dict[str, Any]], *, app: str, key: str
 
 
 def _press_key_reported_no_windows(events: list[dict[str, Any]], *, app: str, key: str) -> bool:
+    return _press_key_reported_text(events, app=app, key=key, needle="noWindowsAvailable")
+
+
+def _press_key_reported_text(events: list[dict[str, Any]], *, app: str, key: str, needle: str) -> bool:
     for event in events:
         if event.get("type") != "item.completed":
             continue
@@ -598,7 +552,7 @@ def _press_key_reported_no_windows(events: list[dict[str, Any]], *, app: str, ke
         if not isinstance(content, list):
             continue
         text = "\n".join(str(entry.get("text") or "") for entry in content if isinstance(entry, dict))
-        if item.get("status") == "failed" and "noWindowsAvailable" in text:
+        if item.get("status") == "failed" and needle in text:
             return True
     return False
 
@@ -687,19 +641,20 @@ def _run_native_smoke() -> dict[str, Any]:
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     started_at = int(time.time())
-    token = f"CODEX_NATIVE_CU_SMOKE_{started_at}_{os.getpid()}"
+    calculator_sequence = "789"
 
     setup_error = ""
-    click_url = ""
-    click_event: threading.Event | None = None
-    type_event: threading.Event | None = None
-    click_server: ThreadingHTTPServer | None = None
-    safari_click_received = False
-    safari_type_received = False
     try:
-        click_url, click_event, type_event, click_server = _start_native_smoke_click_server(token)
         subprocess.run(
-            ["/usr/bin/open", "-g", "-a", "Safari", click_url],
+            ["/usr/bin/open", "-g", "-a", "Calculator"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        subprocess.run(
+            ["/usr/bin/open", str(OPENAI_CODEX_APP)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
@@ -710,25 +665,28 @@ def _run_native_smoke() -> dict[str, Any]:
     except Exception as exc:
         setup_error = str(exc)
 
-    success_line = "SUCCESS native_smoke list_apps_twice get_app_state_ok safari_click_type_cleanup_ok"
+    success_line = "SUCCESS native_smoke list_apps_twice get_app_state_ok calculator_click_type_cleanup_ok"
     prompt = (
         "Use only native computer-use MCP tools and follow these numbered steps exactly. "
         "If the native computer-use tools are not exposed yet, use only Codex tool discovery/search to expose computer-use, then continue. "
         "Do not call command_execution, shell, or any non-computer-use GUI/control tool. "
-        "Safari may not be the frontmost app; target Safari by bundle id instead of relying on the active app. "
+        "Calculator may not be the frontmost app; target Calculator by bundle id com.apple.calculator instead of relying on the active app. "
+        "The setup attempts to return focus to Codex before this run, so do not assume the active app is Calculator. "
         "1. Call computer-use/list_apps exactly twice. "
-        "2. Call computer-use/get_app_state for Safari using bundle id com.apple.Safari. "
-        "3. Call computer-use/click on the button labeled Native Smoke Button. "
-        "4. Call computer-use/get_app_state for Safari again and confirm the page status is clicked. "
-        "5. Call computer-use/click in the text field labeled Native Smoke Input. "
-        f"6. Call computer-use/type_text with app com.apple.Safari and exactly this token: {token}. "
-        "7. Call computer-use/get_app_state for Safari again and confirm the page status is clicked and typed, with the token visible in the input. "
-        "8. After step 7 completes, call computer-use/press_key with app com.apple.Safari and key super+w to close only the smoke tab or window. "
-        "If step 8 returns noWindowsAvailable after the press_key call, treat that as the smoke tab or window already being closed and continue. "
+        "2. Call computer-use/get_app_state for Calculator using bundle id com.apple.calculator. "
+        "3. Call computer-use/press_key with app com.apple.calculator and key Escape to clear any prior calculator value. "
+        "4. Call computer-use/get_app_state for Calculator again. "
+        "For this smoke, do not use x/y coordinate clicks; use only element_index clicks from get_app_state. "
+        "5. Find the Calculator digit 7 button in get_app_state and call computer-use/click with app com.apple.calculator and that line's leading number as element_index. "
+        "6. Find the Calculator digit 8 button in get_app_state and call computer-use/click with app com.apple.calculator and that line's leading number as element_index. "
+        "7. Call computer-use/type_text with app com.apple.calculator and exactly this text: 9. "
+        f"8. Call computer-use/get_app_state for Calculator again and confirm the display value contains {calculator_sequence}. "
+        "9. After step 8 completes, call computer-use/press_key with app com.apple.calculator and key super+w to close Calculator. "
+        "If step 9 returns App quit or noWindowsAvailable after the press_key call, treat that as cleanup complete and continue. "
         "Do not use shell commands, AppleScript, browser automation, Keyboard Maestro, screenshots, or any fallback. "
         "You must complete at least two computer-use/click calls and at least one computer-use/type_text call. "
-        "Do not produce the final answer before step 8 is complete. "
-        f"Finish with exactly one final line: {success_line} only if all 8 numbered steps completed; "
+        "Do not produce the final answer before step 9 is complete. "
+        f"Finish with exactly one final line: {success_line} only if all 9 numbered steps completed; "
         "otherwise FAILURE and the precise failing step."
     )
     cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]
@@ -752,18 +710,6 @@ def _run_native_smoke() -> dict[str, Any]:
         stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
         stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
         returncode = 124
-    finally:
-        if click_event is not None:
-            safari_click_received = click_event.wait(2)
-        if type_event is not None:
-            safari_type_received = type_event.wait(2)
-        if click_server is not None:
-            try:
-                click_server.shutdown()
-                click_server.server_close()
-            except Exception:
-                pass
-
     smoke_cleanup = _cleanup_native_smoke_temp_files(
         Path(tempfile.gettempdir()) / f"codex-cu-native-smoke-{started_at}-{os.getpid()}.txt"
     )
@@ -829,18 +775,23 @@ def _run_native_smoke() -> dict[str, Any]:
     list_apps_completed = _completed_mcp_tool_count(events, "list_apps")
     get_app_state_completed = _completed_mcp_tool_count(events, "get_app_state")
     click_completed = _completed_mcp_tool_count(events, "click")
+    coordinate_click_attempts = _coordinate_click_attempt_count(events)
     type_text_completed = _completed_mcp_tool_count(events, "type_text") >= 1
     press_key_completed = _completed_mcp_tool_count(events, "press_key")
     press_key_attempted = _mcp_tool_attempt_count(events, "press_key")
-    safari_close_completed = _press_key_completed_for(events, app="com.apple.Safari", key="super+w")
-    safari_close_no_windows = _press_key_reported_no_windows(events, app="com.apple.Safari", key="super+w")
-    safari_close_ok = safari_close_completed or safari_close_no_windows
-    cleanup_keypress_ok = safari_close_ok
-    success_marker = _agent_message_contains_line(events, success_line)
-    token_visible_in_safari = _mcp_tool_result_contains(events, "get_app_state", token, app="com.apple.Safari") or (
-        _mcp_tool_result_contains(events, "type_text", token, app="com.apple.Safari")
+    calculator_close_completed = _press_key_completed_for(events, app="com.apple.calculator", key="super+w")
+    calculator_close_no_windows = _press_key_reported_no_windows(events, app="com.apple.calculator", key="super+w")
+    calculator_close_app_quit = _press_key_reported_text(
+        events, app="com.apple.calculator", key="super+w", needle="App quit"
     )
-    safari_input_verified = safari_type_received or token_visible_in_safari
+    calculator_close_ok = calculator_close_completed or calculator_close_no_windows or calculator_close_app_quit
+    cleanup_keypress_ok = calculator_close_ok
+    success_marker = _agent_message_contains_line(events, success_line)
+    calculator_display_verified = _mcp_tool_result_contains(
+        events, "get_app_state", calculator_sequence, app="com.apple.calculator"
+    ) or _mcp_tool_result_contains(events, "type_text", calculator_sequence, app="com.apple.calculator")
+    calculator_click_verified = click_completed >= 2 and calculator_display_verified
+    target_frontmost_seen = _mcp_tool_result_contains(events, "list_apps", "com.apple.calculator [frontmost")
     fallback_patterns = (
         r"(?im)^\s*(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/)?cliclick\b",
         r"(?im)^\s*(?:/usr/sbin/|/usr/bin/)?screencapture\b",
@@ -883,16 +834,18 @@ def _run_native_smoke() -> dict[str, Any]:
     elif get_app_state_completed < 2:
         failure_class = "native_get_app_state_failed"
         error = f"get_app_state completed {get_app_state_completed} times"
-    elif click_completed < 2 or not safari_click_received:
+    elif coordinate_click_attempts:
+        failure_class = "native_coordinate_click_used"
+        error = f"coordinate_click_attempts={coordinate_click_attempts}"
+    elif click_completed < 2 or not calculator_click_verified:
         failure_class = "native_click_failed"
-        error = f"click_completed={click_completed} safari_click_received={safari_click_received}"
-    elif not (type_text_completed and safari_input_verified and cleanup_keypress_ok and success_marker):
+        error = f"click_completed={click_completed} calculator_click_verified={calculator_click_verified}"
+    elif not (type_text_completed and calculator_display_verified and cleanup_keypress_ok and success_marker):
         failure_class = "native_interaction_failed"
         error = (
             f"type_text={type_text_completed} press_key_completed={press_key_completed} "
             f"press_key_attempted={press_key_attempted} cleanup_keypress_ok={cleanup_keypress_ok} "
-            f"success_marker={success_marker} safari_type_received={safari_type_received} "
-            f"token_visible_in_safari={token_visible_in_safari}"
+            f"success_marker={success_marker} calculator_display_verified={calculator_display_verified}"
         )
     if setup_error and not error:
         error = setup_error
@@ -917,33 +870,35 @@ def _run_native_smoke() -> dict[str, Any]:
         "list_apps_completed": list_apps_completed,
         "get_app_state_completed": get_app_state_completed,
         "click_completed": click_completed,
-        "safari_click_received": safari_click_received,
-        "safari_type_received": safari_type_received,
-        "safari_smoke_url": click_url,
+        "coordinate_click_attempts": coordinate_click_attempts,
+        "calculator_click_verified": calculator_click_verified,
+        "calculator_display_verified": calculator_display_verified,
         "type_text_completed": type_text_completed,
         "press_key_completed": press_key_completed,
         "press_key_attempted": press_key_attempted,
-        "safari_close_completed": safari_close_completed,
-        "safari_close_no_windows": safari_close_no_windows,
-        "safari_close_ok": safari_close_ok,
+        "calculator_close_completed": calculator_close_completed,
+        "calculator_close_no_windows": calculator_close_no_windows,
+        "calculator_close_app_quit": calculator_close_app_quit,
+        "calculator_close_ok": calculator_close_ok,
+        "target_frontmost_seen": target_frontmost_seen,
+        "target_not_frontmost_verified": not target_frontmost_seen,
         "cleanup_keypress_ok": cleanup_keypress_ok,
         "success_marker": success_marker,
-        "interaction_token": token,
-        "token_visible_in_safari": token_visible_in_safari,
-        "safari_input_verified": safari_input_verified,
+        "interaction_token": calculator_sequence,
+        "smoke_target": "com.apple.calculator",
         "smoke_cleanup": smoke_cleanup,
         "list_apps_ok": list_apps_completed >= 1,
         "list_apps_repeat_ok": list_apps_completed >= 2,
         "get_app_state_ok": get_app_state_completed >= 2,
         "interaction_ok": (
             click_completed >= 2
-            and safari_click_received
-            and safari_input_verified
+            and calculator_click_verified
+            and calculator_display_verified
             and type_text_completed
             and cleanup_keypress_ok
             and success_marker
         ),
-        "second_mouse_verified": click_completed >= 2 and safari_click_received and safari_input_verified,
+        "second_mouse_verified": click_completed >= 2 and calculator_click_verified and calculator_display_verified,
         "failure_class": failure_class,
         "error": error,
         "stdout_tail": _compact_stdout_tail(stdout),
@@ -2565,7 +2520,7 @@ def _operational_state(
     if bool(health_layers.get("operational")):
         return {
             "state": "native_computer_use_ready",
-            "next_step": "Open or continue a Codex thread and use native mcp__computer_use__ tools.",
+            "next_step": "Use a fresh Codex thread after install or repair, or continue only after mcp__computer_use__.list_apps succeeds in this thread.",
         }
     if not structural_ok:
         return {

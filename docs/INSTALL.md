@@ -49,10 +49,12 @@ native smoke when the guard decides refresh is needed:
 scripts/install.py --yes --full-ensure
 ```
 
-The full native smoke opens a local Safari test page in the background and
-targets Safari by bundle id. It may still show the native Computer Use second
-pointer while it proves click and type operations. Run this verification when a
-short local GUI test is acceptable.
+The full native smoke opens Calculator in the background, returns focus to
+Codex when possible, and targets Calculator by bundle id. It uses native
+app-state element indexes for the click targets, while coordinate clicks remain
+part of the normal native tool surface. It may still show the native Computer
+Use second pointer while it proves click and type operations. Run this
+verification when a short local GUI test is acceptable.
 
 ## Install On Another Mac
 
@@ -82,7 +84,7 @@ scripts/verify-live-state.py --expect-installed-from-repo --require-operational 
 
 The `--full-ensure` and `--require-operational` steps are live GUI
 verification. They are intentionally stricter than structural install and may
-show the native second pointer during the temporary Safari smoke page.
+show the native second pointer during the temporary Calculator smoke.
 
 On slow first-run machines or machines waiting on normal Codex/macOS helper
 startup, extend postinstall timeouts instead of rerunning half-completed

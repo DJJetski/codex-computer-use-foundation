@@ -86,6 +86,10 @@ skill and stay in the user's normal browser session.
    thread/restart Codex if needed; do not continue with `cliclick`,
    screenshots, AppleScript, Accessibility, Keyboard Maestro, or browser
    automation for a native-only Computer Use request.
+   If the namespace is visible but `list_apps` returns `Transport closed`, the
+   installed route may be repaired while the current thread's MCP transport is
+   stale. Open a fresh Codex thread after `ensure`; do not switch to fallback
+   automation as proof of native success.
 4. Begin each native Computer Use turn with `get_app_state` for the target app.
 5. Prefer element-index actions from the accessibility tree over coordinates.
 6. Verify each UI action by reading the action result or fetching fresh state.
@@ -282,7 +286,7 @@ normal. If `tool_search` still does not expose Computer Use but `status` or
 current-thread tool metadata that was loaded before repair. If tools are
 visible but native calls return `Transport closed`, the current thread's MCP
 transport is broken; record a failed native smoke and test a fresh Codex
-session before claiming operational health.
+session before claiming current-thread operational health.
 
 ## Explicit Low-Interference Fallbacks
 

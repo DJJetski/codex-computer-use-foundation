@@ -19,9 +19,11 @@ that span more than one app:
 
 The same OpenAI docs also state important boundaries: app approvals are
 separate from macOS permissions, Codex can act only in apps the user allows,
-users should stay present for sensitive flows, and Computer Use cannot automate
-terminal apps or Codex itself, authenticate as an administrator, or approve
-security and privacy permission prompts on the computer.
+users should stay present for sensitive flows, and Computer Use can view screen
+content, take screenshots, and interact with windows, menus, keyboard input, and
+clipboard state in the target app. The docs also state that Computer Use cannot
+automate terminal apps or Codex itself, authenticate as an administrator, or
+approve security and privacy permission prompts on the computer.
 
 Those boundaries are part of parity. This package must not make a public user
 believe it can bypass OpenAI approvals, macOS privacy controls, account
@@ -72,6 +74,14 @@ or `screenshot` to appear more complete. Exact parity means preserving and
 validating the native tool surface that the bundled OpenAI Codex app plugin
 actually publishes.
 
+OpenAI's app-level documentation mentions screenshots, menus, keyboard input,
+and clipboard state as target-app interaction surfaces. In the current bundled
+Codex app MCP plugin, screenshots and app state are exposed through
+`get_app_state`, keyboard input through `press_key` and `type_text`, menu-like
+or secondary UI operations through `click` or `perform_secondary_action`, and
+there is no standalone clipboard MCP tool. If the bundled plugin adds one, the
+expected tool list and audits should change with it.
+
 ## Background And The Native Second Pointer
 
 OpenAI describes background Computer Use as Codex seeing, clicking, and typing
@@ -80,10 +90,19 @@ with the user's own work in other apps. This package verifies the same class of
 native operation by requiring fresh native smoke evidence with
 `fallback_used=false`.
 
-The release smoke intentionally opens a local Safari test page with `open -g`,
-targets Safari by bundle id, and proves native `click`, `type_text`, and
-`press_key` behavior without relying on the frontmost app. That verifies
-non-frontmost native action through the official route.
+The release smoke intentionally opens Calculator with `open -g`, returns focus
+to Codex when possible, targets Calculator by bundle id, and proves native
+`click`, `type_text`, and `press_key` behavior without relying on the frontmost
+app. For health evidence, the smoke uses
+accessibility element indexes from `get_app_state` so a passing result proves
+semantic app-state control; coordinate clicks remain part of the normal native
+tool surface. The payload records whether Calculator appeared frontmost during
+the smoke so non-frontmost evidence is visible instead of assumed.
+
+The installed route can be healthy while an already-open Codex thread still has
+stale MCP transport state from before repair. If `mcp__computer_use__` is
+visible but a call returns `Transport closed`, parity is proven only after a
+fresh thread or another live thread successfully calls `mcp__computer_use__.list_apps`.
 
 The smoke does not claim arbitrary control of minimized windows, off-Space
 windows, invisible windows, Terminal, Codex itself, administrator prompts, or

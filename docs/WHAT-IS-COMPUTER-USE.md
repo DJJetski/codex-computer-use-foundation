@@ -118,7 +118,7 @@ as MCP tools. This project treats the complete tool list as part of health:
 | `type_text` | Type text through the native tool path. |
 
 The guard fails discovery if any of those tools are missing. The live smoke
-test then proves a safe subset through Safari because it should not perform
+test then proves a safe subset through Calculator because it should not perform
 destructive or broad UI actions just to prove installation health.
 
 ## What This Repo Does
@@ -174,6 +174,10 @@ If `mcp__computer_use__` appears, prove it with:
 mcp__computer_use__.list_apps
 ```
 
+If the namespace is visible but this call returns `Transport closed`, the
+current thread has stale MCP transport state. Run full `ensure` if needed, then
+open a fresh Codex thread and prove the native path there.
+
 If tools are still absent, run:
 
 ```bash
@@ -207,13 +211,15 @@ script is not counted as native Computer Use.
 
 The guard's live native smoke may still show Codex's native second pointer
 while it proves the official route. That is different from a coordinate script:
-the proof targets Safari by bundle id through `computer-use` tools and requires
-`fallback_used=false`.
+the proof targets Calculator by bundle id through `computer-use` tools, uses
+native element indexes for clicks, attempts to return focus to Codex first, and
+requires `fallback_used=false`.
 
-The smoke proves non-frontmost native app action. It does not claim arbitrary
-control of minimized windows, invisible windows, off-Space windows, Terminal,
-Codex itself, administrator prompts, or security/privacy/network/firewall
-dialogs. The separate dialog helper can still handle narrowly matched
+The smoke proves official native app action and records whether the target app
+was observed as non-frontmost. It does not claim arbitrary control of minimized
+windows, invisible windows, off-Space windows, Terminal, Codex itself,
+administrator prompts, or security/privacy/network/firewall dialogs. The
+separate dialog helper can still handle narrowly matched
 Foundation/Codex Little Snitch prompts for this repair system after the user has
 granted local Automation/Accessibility access; that helper is not native
 Computer Use.
