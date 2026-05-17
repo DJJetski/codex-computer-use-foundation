@@ -242,7 +242,7 @@ def main() -> int:
     parser.add_argument("--url", default=None, help="HTTPS public release tarball URL to download instead of building")
     parser.add_argument("--expected-sha256", default=None, help="expected SHA256 for --tarball or --url")
     parser.add_argument("--checksum-file", default=None, help="sha256 sidecar file for --tarball")
-    parser.add_argument("--allow-unverified-archive", action="store_true", help="allow --tarball/--url without SHA256 verification")
+    parser.add_argument("--allow-unverified-archive", action="store_true", help="allow a local --tarball without SHA256 verification; never allowed for --url")
     parser.add_argument("--live", action="store_true", help="destructively uninstall/reinstall the real target home")
     parser.add_argument("--yes", action="store_true", help="required with --live")
     parser.add_argument("--keep-temp", action="store_true", help="keep extracted download directory for debugging")
@@ -253,6 +253,9 @@ def main() -> int:
         return 1
     if args.tarball and args.url:
         print("ERROR: use only one of --tarball or --url", file=sys.stderr)
+        return 1
+    if args.url and args.allow_unverified_archive:
+        print("ERROR: --url requires SHA256 verification; do not use --allow-unverified-archive for network downloads", file=sys.stderr)
         return 1
     if (args.tarball or args.url) and not (args.expected_sha256 or args.checksum_file or args.allow_unverified_archive):
         print("ERROR: --tarball/--url requires --expected-sha256, --checksum-file, or --allow-unverified-archive", file=sys.stderr)

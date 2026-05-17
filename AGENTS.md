@@ -29,7 +29,7 @@ Important invariants:
 - Do not hide AppleScript, Accessibility, `cliclick`, screenshots, Playwright,
   Keyboard Maestro, or VPN inside the Computer Use MCP path.
 - `codex-dialog-autopilot` is a separate operator-dialog layer for narrow local
-  allow/OK/helper/firewall/AppData prompts. It is not native Computer Use
+  allow/OK/helper/firewall prompts. It is not native Computer Use
   health and must not be used as a Computer Use fallback.
 - Fresh native success requires authoritative Codex-context smoke, not just
   structural config.
@@ -44,6 +44,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 scripts/install.py --dry-run
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
 scripts/secret-scan.py --include-untracked
+scripts/public-release-audit.py --include-untracked --all-refs --enforce-public-surface
 git status --short --branch --untracked-files=all
 ```
 

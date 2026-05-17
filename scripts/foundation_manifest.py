@@ -143,6 +143,7 @@ SECRET_VALUE_RE = re.compile(
     r"(?i)(token|secret|password|passwd|api[_-]?key|authorization|bearer|oauth|cookie|session)"
     r"([\"'\\s:=]+)([^\"'\\s,}\\]]{6,})"
 )
+ABSOLUTE_HOME_PATH_RE = re.compile(r"/Users/[A-Za-z0-9._-]+")
 
 HEADER_SECRET_RE = re.compile(r"(?i)(authorization\s*:\s*bearer\s+)([A-Za-z0-9._/-]{6,})")
 ASSIGNMENT_SECRET_RE = re.compile(
@@ -199,6 +200,7 @@ def mode_octal(path: Path) -> str:
 
 
 def redact_text(text: str) -> str:
+    text = ABSOLUTE_HOME_PATH_RE.sub("$HOME", text)
     text = HEADER_SECRET_RE.sub(lambda m: f"{m.group(1)}<redacted>", text)
     text = ASSIGNMENT_SECRET_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}<redacted>{m.group(5)}", text)
     return SECRET_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}<redacted>", text)

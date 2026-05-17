@@ -33,7 +33,9 @@ release, enable the applicable security features for the target repository:
 private vulnerability reporting or another private security contact, secret
 scanning, push protection, Dependabot alerts, branch protection or rulesets for
 `main`, and CodeQL/code scanning when the repository visibility and plan support
-it.
+it. For this repository, `main` protection is a release gate: block force
+pushes and deletions, require the `Release safety` CI job, require pull-request
+review, and require conversation resolution for normal changes.
 
 ## Public-Safety Rules
 
@@ -56,7 +58,7 @@ Before publishing, run:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 scripts/install.py --dry-run
 scripts/secret-scan.py --include-untracked
-scripts/public-release-audit.py --include-untracked --all-refs
+scripts/public-release-audit.py --include-untracked --all-refs --enforce-public-surface
 scripts/build-public-release.py
 scripts/release-drill.py
 git diff --check
@@ -79,8 +81,15 @@ machine-local artifacts if those paths are reintroduced by mistake.
 The builder also writes a SHA256 sidecar next to the tarball. Publish both the
 tarball and its `.sha256` file as release assets. The builder defaults to
 tracked files only and normalizes tar uid, gid, owner names, and member mtimes.
-Use `SOURCE_DATE_EPOCH=<epoch>` only when deliberately overriding the source
+The release manifest records file hashes, source commit, exact tag when built
+from a tag, source repository, and GitHub run id when present. Use
+`SOURCE_DATE_EPOCH=<epoch>` only when deliberately overriding the source
 timestamp for reproducible rebuilds.
+
+Release tags should be annotated tags at the audited commit. If a tag is not
+signed, say that explicitly in the release notes. Release notes should include:
+the commit SHA, tag, tarball SHA256, whether live Mac verification passed, and
+which audit commands ran.
 
 Test the generated tree as if it were downloaded:
 

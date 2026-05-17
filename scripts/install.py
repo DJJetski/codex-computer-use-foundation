@@ -328,19 +328,26 @@ def remove_obsolete_targets(home: Path, *, dry_run: bool) -> list[str]:
     return actions
 
 
-def postinstall(home: Path, *, full_ensure: bool, codex_app: Path) -> int:
+def postinstall(
+    home: Path,
+    *,
+    full_ensure: bool,
+    codex_app: Path,
+    ensure_config_timeout: int,
+    full_ensure_timeout: int,
+) -> int:
     guard = home / ".codex" / "bin" / "codex-computer-use-guard"
     if not guard.is_file():
         return fail(f"installed guard not found: {guard}")
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["CODEX_CU_CODEX_APP"] = str(codex_app)
-    ensure_config = run([str(guard), "ensure-config", "--quiet"], timeout=60, env=env)
+    ensure_config = run([str(guard), "ensure-config", "--quiet"], timeout=ensure_config_timeout, env=env)
     if ensure_config.returncode != 0:
         print(ensure_config.stdout.rstrip(), file=sys.stderr)
         return fail("ensure-config failed")
     if full_ensure:
-        ensure = run([str(guard), "ensure"], timeout=180, env=env)
+        ensure = run([str(guard), "ensure"], timeout=full_ensure_timeout, env=env)
         print(ensure.stdout.rstrip())
         if ensure.returncode != 0:
             return fail("full ensure failed")
@@ -356,12 +363,26 @@ def main() -> int:
     parser.add_argument("--skip-runtime-checks", action="store_true", help="allow temp-home tests without Codex.app checks")
     parser.add_argument("--skip-postinstall", action="store_true", help="copy files but do not run guard repair")
     parser.add_argument("--full-ensure", action="store_true", help="after install, run full guard ensure including smoke refresh when safe")
+    parser.add_argument(
+        "--ensure-config-timeout",
+        type=int,
+        default=int(os.environ.get("CODEX_CU_INSTALL_ENSURE_CONFIG_TIMEOUT", "60")),
+        help="seconds to allow postinstall ensure-config; env CODEX_CU_INSTALL_ENSURE_CONFIG_TIMEOUT",
+    )
+    parser.add_argument(
+        "--full-ensure-timeout",
+        type=int,
+        default=int(os.environ.get("CODEX_CU_INSTALL_FULL_ENSURE_TIMEOUT", "240")),
+        help="seconds to allow --full-ensure; env CODEX_CU_INSTALL_FULL_ENSURE_TIMEOUT",
+    )
     args = parser.parse_args()
 
     home = safe_env_home(args.home)
     codex_app = Path(args.codex_app).expanduser().resolve()
     if not args.dry_run and not args.yes:
         return fail("writes require --yes; use --dry-run to preview")
+    if args.ensure_config_timeout < 1 or args.full_ensure_timeout < 1:
+        return fail("timeouts must be positive seconds")
 
     errors = validate_sources() + validate_target(home, codex_app=codex_app, skip_runtime_checks=args.skip_runtime_checks)
     if errors:
@@ -385,7 +406,13 @@ def main() -> int:
     print(json.dumps(payload, indent=2, sort_keys=True))
     if args.dry_run or args.skip_postinstall:
         return 0
-    return postinstall(home, full_ensure=args.full_ensure, codex_app=codex_app)
+    return postinstall(
+        home,
+        full_ensure=args.full_ensure,
+        codex_app=codex_app,
+        ensure_config_timeout=args.ensure_config_timeout,
+        full_ensure_timeout=args.full_ensure_timeout,
+    )
 
 
 if __name__ == "__main__":

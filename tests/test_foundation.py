@@ -6,6 +6,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import io
+import re
 import shutil
 import stat
 import subprocess
@@ -92,8 +93,11 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("SkyComputerUseClient mcp", text)
         self.assertNotIn("mcpServers", text)
         safe_process_line = next(line for line in text.splitlines() if line.startswith("set safeProcessNames"))
-        for broad_app in ["Google Chrome", "Safari", "Terminal", "iTerm2", "Keyboard Maestro"]:
+        for broad_app in ["Google Chrome", "Safari", "Terminal", "iTerm2", "Keyboard Maestro", "SecurityAgent", "securityagent"]:
             self.assertNotIn(broad_app, safe_process_line)
+        safe_needles_line = next(line for line in text.splitlines() if line.startswith("set safeNeedles"))
+        for privacy_needle in ["Datenschutz und Sicherheit", "Daten aus anderen Apps", "App-Daten", "control", "steuern"]:
+            self.assertNotIn(privacy_needle, safe_needles_line)
         strong_buttons_line = next(line for line in text.splitlines() if line.startswith("set strongButtons"))
         self.assertNotIn("Trust", strong_buttons_line)
         self.assertNotIn("Vertrauen", strong_buttons_line)
@@ -102,6 +106,9 @@ class FoundationTests(unittest.TestCase):
 
     def test_guard_generates_portable_shell_wrappers(self) -> None:
         guard = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
+        guard_module = load_guard_module()
+        launcher = repo_path("src/bin/codex-computer-use-native-launcher").read_text(encoding="utf-8")
+        self.assertEqual(launcher, guard_module._native_launcher_text())
         self.assertIn('exec "$HOME/.codex/bin/codex-computer-use-native-launcher" "$@"', guard)
         self.assertIn('"$HOME/.codex/bin/codex-computer-use-guard" ensure-config', guard)
         self.assertLess(
@@ -111,7 +118,7 @@ class FoundationTests(unittest.TestCase):
         self.assertIn('$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/', guard)
         self.assertIn('for native_binary in "${native_candidates[@]}"; do', guard)
         self.assertIn('"cleanup-mcp-clients"', guard)
-        self.assertIn("post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=True)", guard)
+        self.assertIn("post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=False)", guard)
         self.assertIn('"post_smoke_mcp_cleanup": post_smoke_mcp_cleanup', guard)
         self.assertNotIn("${{", guard)
 
@@ -158,6 +165,22 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(sorted(killed), [101, 102])
         self.assertEqual(cleanup["running"], 3)
         self.assertEqual(cleanup["skipped_young"], [])
+
+    def test_guard_default_mcp_cleanup_does_not_kill_active_duplicates(self) -> None:
+        guard = load_guard_module()
+        parent = os.getpid()
+        killed: list[int] = []
+        guard._processes_matching = lambda needle: [
+            (201, parent, "/tmp/SkyComputerUseClient mcp"),
+            (202, parent, "/tmp/SkyComputerUseClient mcp"),
+        ]
+        guard._process_age_seconds = lambda pid: 120
+        guard._kill_pid = lambda pid: killed.append(pid) or True
+
+        cleanup = guard.cleanup_stale_mcp_clients(kill_duplicates=False)
+
+        self.assertEqual(killed, [])
+        self.assertEqual(cleanup["running"], 2)
 
     def test_native_smoke_cleanup_removes_temp_text_files(self) -> None:
         guard = load_guard_module()
@@ -282,6 +305,12 @@ class FoundationTests(unittest.TestCase):
             ".codex/plugins/cache/openai-bundled/computer-use/*/skills/computer-use/SKILL.md",
             FOUNDATION_OBSOLETE_GLOBS,
         )
+
+    def test_github_issue_config_disables_blank_security_bypass(self) -> None:
+        issue_config = repo_path(".github/ISSUE_TEMPLATE/config.yml").read_text(encoding="utf-8")
+        self.assertIn("blank_issues_enabled: false", issue_config)
+        self.assertIn("privately-reporting-a-security-vulnerability", issue_config)
+        self.assertIn("adding-a-security-policy", issue_config)
 
     def test_guard_suppresses_plugin_skill_publication(self) -> None:
         module = load_guard_module()
@@ -622,7 +651,11 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue(checksum_file.is_file())
             self.assertIn(digest, checksum_file.read_text(encoding="utf-8"))
             manifest = json.loads((tmp_path / "release" / "public" / "PUBLIC_RELEASE_MANIFEST.json").read_text(encoding="utf-8"))
-            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(manifest["schema_version"], 3)
+            self.assertIn("git_commit", manifest)
+            self.assertIn("git_tag", manifest)
+            self.assertIn("github_run_id", manifest)
+            self.assertIn("source_repository", manifest)
             self.assertFalse(any(path.startswith("docs/internal/") for path in manifest["files"]))
             self.assertFalse(any(path.startswith("src/skills/macos-computer-use/references/") for path in manifest["files"]))
             self.assertEqual(
@@ -805,6 +838,26 @@ class FoundationTests(unittest.TestCase):
         )
         self.assertNotEqual(drill.returncode, 0, drill.stdout)
         self.assertIn("release URL must use https", drill.stdout)
+
+    def test_release_drill_requires_sha_for_downloaded_archives(self) -> None:
+        drill = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "release-drill.py"),
+                "--url",
+                "https://example.invalid/public.tar.gz",
+                "--allow-unverified-archive",
+                "--name",
+                "public",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(drill.returncode, 0, drill.stdout)
+        self.assertIn("requires SHA256 verification", drill.stdout)
 
     def test_release_drill_rejects_path_escaping_tarball(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1202,6 +1255,26 @@ class FoundationTests(unittest.TestCase):
             self.assertEqual(len(matching), 1)
             self.assertFalse(matching[0]["ok"])
 
+    def test_guard_scrubs_string_form_disabled_computer_use_tool_suggest(self) -> None:
+        guard = load_guard_module()
+        config = "\n".join(
+            [
+                '[plugins."computer-use@openai-bundled"]',
+                "enabled = true",
+                "",
+                "[tool_suggest]",
+                'disabled_tools = ["other-tool", "computer-use@openai-bundled", { type = "plugin", id = "computer-use@openai-bundled" }]',
+            ]
+        ) + "\n"
+
+        scrubbed = guard._scrub_computer_use_disabled_tool(config)
+
+        self.assertIn('[plugins."computer-use@openai-bundled"]', scrubbed)
+        self.assertIn('"other-tool"', scrubbed)
+        disabled_arrays = re.findall(r"disabled_tools\s*=\s*\[(.*?)\]", scrubbed, re.DOTALL)
+        self.assertFalse(any("computer-use@openai-bundled" in item for item in disabled_arrays))
+        self.assertFalse(guard._computer_use_disabled(scrubbed))
+
     def test_installer_refuses_manifest_target_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp).resolve()
@@ -1447,11 +1520,52 @@ class FoundationTests(unittest.TestCase):
     def test_redaction_covers_toml_and_authorization_headers(self) -> None:
         dummy_key = "abcdef" + "1234567890"
         dummy_token = "ghp_" + "abcdefghijklmnopqrstuvwx"
-        text = f'api_key = "{dummy_key}"\nAuthorization: Bearer {dummy_token}\n'
+        text = f'api_key = "{dummy_key}"\nAuthorization: Bearer {dummy_token}\npath = "/Users/privateuser/.codex/config.toml"\n'
         redacted = redact_text(text)
         self.assertNotIn(dummy_key, redacted)
         self.assertNotIn(dummy_token, redacted)
+        self.assertNotIn("/Users/privateuser", redacted)
+        self.assertIn("$HOME/.codex/config.toml", redacted)
         self.assertIn("<redacted>", redacted)
+
+    def test_snapshot_live_state_redacts_home_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve() / "home"
+            (home / ".codex").mkdir(parents=True)
+            snap = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "snapshot-live-state.py"),
+                    "--home",
+                    str(home),
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(snap.returncode, 0, snap.stdout)
+            payload = json.loads(snap.stdout)
+            self.assertEqual(payload["home"], "$HOME")
+            self.assertNotIn(str(home), snap.stdout)
+
+            private = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "snapshot-live-state.py"),
+                    "--home",
+                    str(home),
+                    "--include-private-paths",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(private.returncode, 0, private.stdout)
+            self.assertEqual(json.loads(private.stdout)["home"], str(home))
 
     def test_secret_scan_detects_local_state_and_tokens(self) -> None:
         module_path = SCRIPTS / "secret-scan.py"

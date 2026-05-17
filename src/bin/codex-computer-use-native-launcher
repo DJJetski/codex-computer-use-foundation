@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+guard_repair_ok=1
 if [[ "${CODEX_CU_LAUNCHER_SKIP_GUARD:-}" != "1" ]]; then
-  "$HOME/.codex/bin/codex-computer-use-guard" ensure-config --quiet >/dev/null 2>&1 || true
+  if ! "$HOME/.codex/bin/codex-computer-use-guard" ensure-config --quiet >/dev/null 2>&1; then
+    guard_repair_ok=0
+    echo "codex-computer-use-native-launcher: ensure-config failed; skipping stale cache candidates" >&2
+  fi
 fi
 
 codex_app="${CODEX_CU_CODEX_APP:-/Applications/Codex.app}"
 native_candidates=(
   "$HOME/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
-  "$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/"Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
   "$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/"Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
   "$codex_app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
 )
 
 for native_binary in "${native_candidates[@]}"; do
+  if [[ "$guard_repair_ok" != "1" && "$native_binary" == "$HOME/.codex/plugins/cache/openai-bundled/computer-use"* ]]; then
+    continue
+  fi
   if [[ -x "$native_binary" ]]; then
     exec "$native_binary" "$@"
   fi

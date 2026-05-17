@@ -39,12 +39,12 @@ jobs:
       - name: Run release and secret audits
         run: |
           scripts/secret-scan.py --include-untracked
-          scripts/public-release-audit.py --include-untracked
+          scripts/public-release-audit.py --include-untracked --enforce-public-surface
           git diff --check
 
       - name: Run full history public audit
         if: github.event_name != 'pull_request'
-        run: scripts/public-release-audit.py --include-untracked --all-refs
+        run: scripts/public-release-audit.py --include-untracked --all-refs --enforce-public-surface
 
       - name: Build public release
         run: scripts/build-public-release.py --output-dir "${TMPDIR:-/tmp}/public-release"

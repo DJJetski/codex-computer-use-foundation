@@ -81,8 +81,10 @@ Expected high-level result:
 - Manifest-owned live files matched the repo source.
 - Failed verifier checks: none.
 - `mcp_client_ownership.ok=true` with no duplicate parent groups. Full
-  `ensure` cleans old duplicate native MCP clients before and after native
-  smoke refresh and only then reports operational health.
+  `ensure` cleans orphaned native MCP clients, but it does not force-kill
+  duplicate clients that may belong to another active Codex thread. Duplicate
+  parent groups remain fail-closed until an explicit operator cleanup or thread
+  restart removes them.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 

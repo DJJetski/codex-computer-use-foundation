@@ -50,12 +50,17 @@ def main() -> int:
     parser.add_argument("--home", default=None, help="target home directory; defaults to $HOME")
     parser.add_argument("--output", default=None, help="optional output JSON path; stdout if omitted")
     parser.add_argument("--include-status", action="store_true", help="include redacted guard status output")
+    parser.add_argument(
+        "--include-private-paths",
+        action="store_true",
+        help="include absolute local paths; default output replaces the target home with $HOME",
+    )
     args = parser.parse_args()
 
     home = safe_env_home(args.home)
     payload: dict[str, object] = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "home": str(home),
+        "home": str(home) if args.include_private_paths else "$HOME",
         "macos": platform.mac_ver()[0],
         "platform": platform.platform(),
         "files": file_inventory(home),

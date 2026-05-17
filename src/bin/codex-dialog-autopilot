@@ -2,9 +2,10 @@
 """Approve narrow, routine local dialogs for unattended Codex Mac automation.
 
 This helper is intentionally separate from the native Computer Use MCP server.
-It is an operator safety net for first-use product dialogs, browser-control
-prompts, helper prompts, and local network/firewall prompts that are already
-covered by the user's standing approval policy.
+It is an operator safety net for routine local product dialogs, helper prompts,
+and local browser/network/firewall prompts that are already covered by the
+user's standing approval policy. It must not approve privacy, security, account,
+payment, cloud-permission, TCC, or password/security-agent prompts.
 """
 
 from __future__ import annotations
@@ -114,13 +115,12 @@ def _accessibility_ok() -> tuple[bool, str]:
 
 def _approver_applescript() -> str:
     # Start with the frontmost process, then scan a short allowlist of helper
-    # processes. macOS privacy prompts for SkyComputerUseService can appear as
-    # non-frontmost windows, so frontmost-only scanning misses exactly the
-    # first-use AppData prompt we need to approve.
+    # processes. This deliberately excludes SecurityAgent and privacy/security
+    # prompts; those require the user's normal macOS approval flow.
     return r'''
-set safeProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "SecurityAgent", "securityagent", "Little Snitch Agent", "Little Snitch"}
-set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "SecurityAgent", "securityagent", "Little Snitch Agent", "Little Snitch"}
-set safeNeedles to {"Codex", "Computer Use", "Codex Computer Use", "SkyComputerUse", "Google Chrome", "Chrome", "Safari", "browser", "Browser", "chatgpt.com", "Terminal", "Little Snitch", "network", "firewall", "incoming connections", "eingehende Verbindungen", "control", "steuern", "Daten aus anderen Apps", "anderen Apps", "App-Daten", "Datenschutz und Sicherheit"}
+set safeProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "Little Snitch Agent", "Little Snitch"}
+set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "Little Snitch Agent", "Little Snitch"}
+set safeNeedles to {"Codex Computer Use", "SkyComputerUse", "Google Chrome", "Chrome", "Safari", "browser", "Browser", "chatgpt.com", "Little Snitch", "network", "firewall", "incoming connections", "eingehende Verbindungen"}
 set strongButtons to {"Always Allow", "Immer erlauben", "Immer zulassen", "Allow", "Erlauben", "Zulassen", "Open", "Oeffnen", "Öffnen", "Continue", "Fortfahren"}
 set weakButtons to {"OK", "Done", "Fertig"}
 

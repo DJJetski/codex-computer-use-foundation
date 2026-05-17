@@ -327,9 +327,9 @@ layer, not the native Computer Use health source. A transient foreground
 The autopilot checks the frontmost app first, then scans only currently running
 allowlisted dialog owners such as `Codex Computer Use`,
 `SkyComputerUseService`, `UserNotificationCenter`, `CoreServicesUIAgent`, and
-Little Snitch. This is required because the German macOS AppData prompt
-`"Codex Computer Use" moechte auf Daten aus anderen Apps zugreifen` can be
-owned by a non-frontmost helper process.
+Little Snitch. It intentionally does not scan `SecurityAgent` or approve
+privacy, security, TCC, password, account, payment, or cloud-permission
+dialogs.
 
 Accept routine local dialogs when the visible text matches the active task and
 the action is reversible or narrowly scoped:
@@ -338,7 +338,7 @@ the action is reversible or narrowly scoped:
   development server prompts
 - Little Snitch prompts for current-task domains or apps, including
   `chatgpt.com`
-- local `Allow`, `OK`, `Open`, `Continue`, `Trust`, and equivalent confirmations
+- local `Allow`, `OK`, `Open`, `Continue`, and equivalent routine confirmations
 
 Choose the narrowest visible option that works:
 

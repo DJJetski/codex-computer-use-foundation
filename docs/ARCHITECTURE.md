@@ -181,9 +181,11 @@ Files:
 Responsibilities:
 
 - Accept only narrow allowlisted local dialogs that match routine
-  Codex/browser/helper/network/firewall/AppData prompts. Strong buttons such as
+  Codex/browser/helper/network/firewall prompts. Strong buttons such as
   allow/open/continue require both an allowlisted helper process and
   allowlisted dialog text; process name alone is not enough.
+- Exclude privacy, security, account, cloud-permission, payment, TCC, password,
+  and SecurityAgent prompts from unattended approval.
 - Keep these prompts from blocking future reinstall or first-run flows after
   the one-time macOS Accessibility/Automation permission exists.
 - Stay outside the native Computer Use MCP path. This layer is not used to
@@ -227,6 +229,11 @@ It requires native `click` and `type_text` evidence, confirms the local page
 received both events, closes its own smoke tab where the native server allows
 it, and removes stale `codex-cu-native-smoke-*.txt` temp files from older
 releases.
+
+Duplicate native MCP clients under one Codex AppServer parent are fail-closed
+health evidence. The guard cleans orphaned clients automatically, but active
+duplicate transports require explicit operator cleanup so a repair run does not
+silently kill another thread's live native Computer Use session.
 
 `ok=true` requires all of the above.
 

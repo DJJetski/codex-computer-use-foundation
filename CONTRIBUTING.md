@@ -23,7 +23,7 @@ scripts/install.py --dry-run
 scripts/build-public-release.py
 scripts/release-drill.py
 scripts/secret-scan.py --include-untracked
-scripts/public-release-audit.py --include-untracked --all-refs
+scripts/public-release-audit.py --include-untracked --all-refs --enforce-public-surface
 git diff --check
 ```
 

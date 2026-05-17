@@ -41,6 +41,12 @@ Playwright, and VPN must not be hidden inside the Computer Use MCP path.
 `codex-dialog-autopilot` is a separate local-dialog operator helper. It is not
 native Computer Use health evidence and must not be used to mask native MCP
 failures. It does not edit TCC databases, grant macOS permissions, bypass
-OpenAI or macOS safety checks, approve account/cloud/security/payment dialogs,
-or count as native Computer Use success. Strong local-dialog approval requires
-both an allowlisted helper process and allowlisted dialog text.
+OpenAI or macOS safety checks, approve privacy, account, cloud, security,
+payment, TCC, password, or SecurityAgent dialogs, or count as native Computer
+Use success. Strong local-dialog approval requires both an allowlisted helper
+process and allowlisted routine-dialog text.
+
+This repository is for troubleshooting and stabilizing the official native
+Codex Computer Use route. It is not intended to bypass OpenAI usage policies,
+OpenAI safety checks, macOS privacy controls, account protections, or
+third-party security controls.

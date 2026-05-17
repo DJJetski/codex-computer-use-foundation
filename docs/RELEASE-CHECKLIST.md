@@ -10,7 +10,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 scripts/install.py --dry-run
 git diff --check
 scripts/secret-scan.py --include-untracked
-scripts/public-release-audit.py --include-untracked --all-refs
+scripts/public-release-audit.py --include-untracked --all-refs --enforce-public-surface
 git status --short --branch --untracked-files=all
 ```
 
@@ -35,6 +35,8 @@ Expected:
 - The builder uses tracked files by default, writes
   `PUBLIC_RELEASE_MANIFEST.json`, normalizes tar metadata, and writes the
   `.sha256` sidecar.
+- The release manifest includes the source commit, exact tag when built from a
+  tag, source repository, and GitHub run id when available.
 - The non-live drill extracts the tarball and installs from the extracted copy
   into a clean temporary home.
 
@@ -132,10 +134,14 @@ Recommended GitHub repository settings before a public release:
   before making the repository public.
 - Enable secret scanning and push protection where available.
 - Enable Dependabot alerts.
-- Protect `main` with pull request review, required CI, required conversation
-  resolution, deletion protection, and force-push protection.
+- Protect `main` with pull request review, required `Release safety` CI,
+  required conversation resolution, deletion protection, and force-push
+  protection before publishing a release from that branch.
 - Consider CodeQL/code scanning after confirming the repository visibility and
   plan support it.
+- Use an annotated release tag at the audited commit. If the tag is unsigned,
+  state that in the release notes together with the commit SHA, tarball SHA256,
+  and live verification status.
 
 ## Maintainer Privacy
 

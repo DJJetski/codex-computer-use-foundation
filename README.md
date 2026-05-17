@@ -111,7 +111,7 @@ Main installed pieces:
 | `$HOME/.codex/bin/codex-computer-use-native-smoke` | Compatibility entrypoint for guard-owned native smoke. |
 | `$HOME/.codex/bin/codex-computer-use-preflight` | Read-only health preflight before GUI work. |
 | `$HOME/.codex/bin/codex-computer-use-notify` | Fail-open notification wrapper with stale helper cleanup. |
-| `$HOME/.codex/bin/codex-dialog-autopilot` | Separate narrow local dialog helper for routine allow/OK/helper/firewall/AppData prompts. Not native Computer Use. |
+| `$HOME/.codex/bin/codex-dialog-autopilot` | Separate narrow local dialog helper for routine allow/OK/helper/firewall prompts. Not native Computer Use. |
 | `$HOME/.codex/skills/macos-computer-use/SKILL.md` | The one visible Computer Use skill users and agents should load. |
 | `$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/.mcp.json` | Plugin MCP shim that routes Codex plugin loading to the native launcher. |
 
@@ -151,6 +151,10 @@ Preview:
 ```bash
 scripts/install.py --dry-run
 ```
+
+Install writes foundation-owned files under `$HOME/.codex`, installs user
+LaunchAgents for self-repair, and may run native validation. It does not grant
+macOS permissions or bypass OpenAI safety checks; use the dry run first.
 
 Install and run full native validation:
 

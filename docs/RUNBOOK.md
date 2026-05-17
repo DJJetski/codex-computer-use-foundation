@@ -159,11 +159,13 @@ explicit operator flag:
 Do not run the forced variant while another active thread is in the middle of a
 native Computer Use task.
 
-Full `~/.codex/bin/codex-computer-use-guard ensure` now applies that duplicate
-cleanup with a short grace window before reporting health. `status` remains
-read-only. `ok=true` requires `mcp_client_ownership.ok=true`; duplicate
-`SkyComputerUseClient mcp` groups are treated as a real operational blocker,
-not a cosmetic diagnostic.
+Full `~/.codex/bin/codex-computer-use-guard ensure` cleans orphaned native MCP
+clients, but it does not force-kill duplicate clients that may belong to another
+active Codex thread. `status` remains read-only. `ok=true` requires
+`mcp_client_ownership.ok=true`; duplicate `SkyComputerUseClient mcp` groups are
+treated as a real operational blocker, not a cosmetic diagnostic. Use
+`cleanup-mcp-clients --force-duplicates` only as an explicit operator action
+when you know no other active thread is using native Computer Use.
 
 ## Backup Check
 

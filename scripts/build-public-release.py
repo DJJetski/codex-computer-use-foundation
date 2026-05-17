@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_NAME = "codex-computer-use-foundation-public"
 RELEASE_MANIFEST = "PUBLIC_RELEASE_MANIFEST.json"
 RELEASE_GENERATOR = "scripts/build-public-release.py"
-MANIFEST_SCHEMA_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 3
 IGNORABLE_EXISTING_RELEASE_FILES = {".DS_Store"}
 
 PUBLIC_EXACT = {
@@ -111,6 +111,32 @@ def release_timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(release_epoch()))
 
 
+def git_output(args: list[str]) -> str:
+    result = run(["git", *args])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def git_commit() -> str:
+    return git_output(["rev-parse", "HEAD"])
+
+
+def git_tag() -> str:
+    env_ref = os.environ.get("GITHUB_REF_TYPE"), os.environ.get("GITHUB_REF_NAME")
+    if env_ref[0] == "tag" and env_ref[1]:
+        return env_ref[1]
+    return git_output(["describe", "--exact-match", "--tags", "HEAD"])
+
+
+def source_repository() -> str:
+    # Repository owner names can be personal handles. Keep public release
+    # packages privacy-preserving by default; maintainers may opt in during a
+    # release workflow after deciding the source URL is intentionally public.
+    value = os.environ.get("CODEX_PUBLIC_SOURCE_REPOSITORY", "").strip()
+    if not value or "@" in value:
+        return ""
+    return value
+
+
 def tracked_files(*, include_untracked: bool = False) -> list[str]:
     cmd = ["git", "ls-files", "--cached"]
     if include_untracked:
@@ -194,8 +220,12 @@ def copy_release(files: list[str], release_root: Path, *, dry_run: bool, allow_l
         "created_at": release_timestamp(),
         "file_sha256": file_hashes,
         "generated_by": RELEASE_GENERATOR,
+        "git_commit": git_commit(),
+        "git_tag": git_tag(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
         "name": release_root.name,
         "schema_version": MANIFEST_SCHEMA_VERSION,
+        "source_repository": source_repository(),
         "files": files,
     }
     (release_root / RELEASE_MANIFEST).write_text(

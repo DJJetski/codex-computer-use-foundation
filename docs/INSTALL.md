@@ -59,7 +59,7 @@ Prerequisites:
   need the guard's Swift priority-escalation shim repair. The guard checks
   this only when the dyld failure is detected.
 - the user accepts any normal one-time macOS permissions required by native
-  Computer Use
+  Computer Use; this package does not grant or bypass those permissions
 
 Then clone the repo and run:
 
@@ -70,6 +70,14 @@ python3 --version
 scripts/install.py --dry-run
 scripts/install.py --yes --full-ensure
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
+```
+
+On slow first-run machines or machines waiting on normal Codex/macOS helper
+startup, extend postinstall timeouts instead of rerunning half-completed
+commands:
+
+```bash
+scripts/install.py --yes --full-ensure --ensure-config-timeout 120 --full-ensure-timeout 420
 ```
 
 If Codex is installed somewhere other than `/Applications/Codex.app`, pass
@@ -146,6 +154,11 @@ scripts/release-drill.py --tarball /tmp/codex-computer-use-foundation-public.tar
   That full pass also asks the guard to install/report the separate
   `codex-dialog-autopilot` LaunchAgent where local Accessibility permission
   allows it.
+- The postinstall timeouts default to 60 seconds for `ensure-config` and 240
+  seconds for full `ensure`. They can be overridden with
+  `--ensure-config-timeout`, `--full-ensure-timeout`,
+  `CODEX_CU_INSTALL_ENSURE_CONFIG_TIMEOUT`, or
+  `CODEX_CU_INSTALL_FULL_ENSURE_TIMEOUT`.
 
 ## Installed Runtime Inventory
 
@@ -200,6 +213,8 @@ or unrelated `$HOME/.codex` settings.
 - It does not modify `/Applications/Codex.app`.
 - It does not bypass macOS privacy prompts or grant permissions without the
   user's normal macOS approval flow.
+- It does not approve privacy, account, cloud, security, payment, TCC,
+  password, or SecurityAgent prompts through the dialog helper.
 - It does not spoof signatures or entitlements on the OpenAI app bundle. On
   macOS/Codex combinations with the known Swift runtime gap, an explicitly
   enabled compatibility path may ad-hoc sign local copied runtime bundles under

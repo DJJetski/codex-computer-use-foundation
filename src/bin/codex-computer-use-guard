@@ -136,6 +136,13 @@ COMPUTER_USE_DISABLED_TOOL_TEXT_RE = re.compile(
     r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"computer-use@openai-bundled"\s*\}',
     re.DOTALL,
 )
+COMPUTER_USE_DISABLED_TOOL_STRING_RE = re.compile(
+    r'(?P<prefix>,\s*)?(?P<quote>["\'])computer-use@openai-bundled(?P=quote)(?P<suffix>\s*,)?',
+    re.DOTALL,
+)
+DISABLED_TOOLS_ARRAY_RE = re.compile(
+    r"(?ms)^(?P<prefix>\s*disabled_tools\s*=\s*\[)(?P<body>.*?)(?P<suffix>\]\s*)$"
+)
 
 
 def _self_path() -> Path:
@@ -1121,19 +1128,26 @@ def _native_launcher_text() -> str:
     return """#!/usr/bin/env bash
 set -euo pipefail
 
+guard_repair_ok=1
 if [[ "${CODEX_CU_LAUNCHER_SKIP_GUARD:-}" != "1" ]]; then
-  "$HOME/.codex/bin/codex-computer-use-guard" ensure-config --quiet >/dev/null 2>&1 || true
+  if ! "$HOME/.codex/bin/codex-computer-use-guard" ensure-config --quiet >/dev/null 2>&1; then
+    guard_repair_ok=0
+    echo "codex-computer-use-native-launcher: ensure-config failed; skipping stale cache candidates" >&2
+  fi
 fi
 
 codex_app="${CODEX_CU_CODEX_APP:-/Applications/Codex.app}"
 native_candidates=(
   "$HOME/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
-  "$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/"Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
   "$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/"Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
   "$codex_app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
 )
 
 for native_binary in "${native_candidates[@]}"; do
+  if [[ "$guard_repair_ok" != "1" && "$native_binary" == "$HOME/.codex/plugins/cache/openai-bundled/computer-use"* ]]; then
+    continue
+  fi
   if [[ -x "$native_binary" ]]; then
     exec "$native_binary" "$@"
   fi
@@ -1708,7 +1722,7 @@ def mcp_client_ownership_status() -> dict[str, Any]:
         "running": len(processes),
         "processes": processes,
         "duplicate_parents": duplicate_parents,
-        "expected": "ok=true requires no duplicate native MCP clients under one Codex app-server parent; full ensure cleans old duplicate clients before and after native smoke refresh after a short grace window",
+        "expected": "ok=true requires no duplicate native MCP clients under one Codex app-server parent; full ensure cleans orphaned clients but does not kill active duplicate transports unless cleanup-mcp-clients --force-duplicates is run explicitly",
     }
 
 
@@ -2688,7 +2702,24 @@ def _ensure_direct_mcp_server(lines: list[str], binary: Path) -> None:
 
 
 def _computer_use_disabled(config_text: str) -> bool:
-    return bool(COMPUTER_USE_DISABLED_TOOL_RE.search(config_text))
+    return any(
+        COMPUTER_USE_PLUGIN_ID in match.group("body")
+        for match in DISABLED_TOOLS_ARRAY_RE.finditer(config_text)
+    )
+
+
+def _scrub_disabled_tools_array(match: re.Match[str]) -> str:
+    body = match.group("body")
+    if COMPUTER_USE_PLUGIN_ID not in body:
+        return match.group(0)
+    body = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.sub("", body)
+    body = COMPUTER_USE_DISABLED_TOOL_STRING_RE.sub("", body)
+    body = re.sub(r",\s*,", ",", body, flags=re.DOTALL)
+    body = re.sub(r"^\s*,\s*", "", body, flags=re.DOTALL)
+    body = re.sub(r"\s*,\s*$", "", body, flags=re.DOTALL)
+    if not body.strip():
+        return ""
+    return f"{match.group('prefix')}{body}{match.group('suffix')}"
 
 
 def _scrub_computer_use_disabled_tool(config_text: str) -> str:
@@ -2696,6 +2727,7 @@ def _scrub_computer_use_disabled_tool(config_text: str) -> str:
     scrubbed = re.sub(r",\s*" + object_pattern, "", config_text, flags=re.DOTALL)
     scrubbed = re.sub(object_pattern + r"\s*,\s*", "", scrubbed, flags=re.DOTALL)
     scrubbed = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.sub("", scrubbed)
+    scrubbed = DISABLED_TOOLS_ARRAY_RE.sub(_scrub_disabled_tools_array, scrubbed)
     scrubbed = re.sub(
         r"(?m)^\s*disabled_tools\s*=\s*\[\s*\]\s*\n?",
         "",
@@ -2713,8 +2745,13 @@ def _remove_computer_use_from_disabled_tools_line(line: str) -> str | None:
     if not (stripped.startswith("[") and stripped.endswith("]")):
         return line
 
-    entries = re.findall(r"\{[^{}]*\}", stripped[1:-1])
-    kept = [entry for entry in entries if not COMPUTER_USE_DISABLED_TOOL_RE.fullmatch(entry.strip())]
+    entries = re.findall(r"\{[^{}]*\}|\"[^\"\n]*\"|'[^'\n]*'", stripped[1:-1])
+    kept = [
+        entry
+        for entry in entries
+        if COMPUTER_USE_PLUGIN_ID not in entry
+        and not COMPUTER_USE_DISABLED_TOOL_RE.fullmatch(entry.strip())
+    ]
     if not kept:
         return None
     return f"{prefix.rstrip()} = [{', '.join(kept)}]"
@@ -2793,7 +2830,7 @@ def ensure() -> dict[str, Any]:
         runtime_patch_changed, runtime_patch = ensure_runtime_compat(cache_root)
         launch_services_registered = _register_launch_services(cache_root)
         service_warm_ok, service_warm_error = _warm_service(cache_root)
-        stale_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=True)
+        stale_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=False)
         stale_notify_cleanup = cleanup_stale_notify_clients()
         launch_agent_changed, launch_agent_loaded = ensure_launch_agent()
         dialog_autopilot = ensure_dialog_autopilot()
@@ -2869,7 +2906,7 @@ def ensure() -> dict[str, Any]:
         "duplicate_grace_seconds": DUPLICATE_MCP_GRACE_SECONDS,
     }
     if runtime_ready:
-        post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=True)
+        post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=False)
         ownership = mcp_client_ownership_status()
     health_layers = _health_layers(
         configured=configured,
