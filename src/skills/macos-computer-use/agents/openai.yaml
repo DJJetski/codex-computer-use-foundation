@@ -1,0 +1,7 @@
+interface:
+  display_name: "Computer Use"
+  short_description: "Control the real Mac with native Computer Use"
+  default_prompt: "Use $computer-use and native mcp__computer_use__ tools first; do not use GUI fallbacks for native-only requests."
+
+policy:
+  allow_implicit_invocation: true

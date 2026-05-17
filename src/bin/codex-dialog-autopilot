@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+"""Approve narrow, routine local dialogs for unattended Codex Mac automation.
+
+This helper is intentionally separate from the native Computer Use MCP server.
+It is an operator safety net for first-use product dialogs, browser-control
+prompts, helper prompts, and local network/firewall prompts that are already
+covered by the user's standing approval policy.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import plistlib
+import signal
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+HOME = Path.home()
+CODEX_HOME = HOME / ".codex"
+STATE_DIR = CODEX_HOME / "state" / "dialog-autopilot"
+LOG = CODEX_HOME / "logs" / "dialog-autopilot.log.jsonl"
+STATUS_SNAPSHOT = STATE_DIR / "last-status.json"
+DAEMON_STATUS_SNAPSHOT = STATE_DIR / "last-daemon-status.json"
+MAIN = CODEX_HOME / "bin" / "codex-dialog-autopilot"
+SUPPORT_DIR = HOME / "Library" / "Application Support" / "CodexComputerUseGuard"
+BOOTSTRAP = SUPPORT_DIR / "codex-dialog-autopilot-bootstrap"
+BACKUP = SUPPORT_DIR / "codex-dialog-autopilot.backup"
+LAUNCH_AGENT_LABEL = "io.github.codex-computer-use-foundation.dialog-autopilot"
+LEGACY_LAUNCH_AGENT_LABELS: tuple[str, ...] = ()
+LAUNCH_AGENT = HOME / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
+
+POLL_SECONDS = 1.5
+APPROVAL_SCAN_TIMEOUT_SECONDS = 20.0
+DAEMON_STATUS_MAX_AGE_SECONDS = 45.0
+
+
+def _log(level: str, message: str, **fields: Any) -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {"ts": int(time.time()), "level": level, "message": message}
+        if fields:
+            payload["fields"] = fields
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
+
+
+def _write_status(payload: dict[str, Any], *, daemon: bool = False) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        snapshot = {"ts": int(time.time()), "payload": payload}
+        path = DAEMON_STATUS_SNAPSHOT if daemon else STATUS_SNAPSHOT
+        tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _read_status(*, daemon: bool = False) -> dict[str, Any] | None:
+    try:
+        path = DAEMON_STATUS_SNAPSHOT if daemon else STATUS_SNAPSHOT
+        with path.open("r", encoding="utf-8") as fh:
+            snapshot = json.load(fh)
+        if isinstance(snapshot, dict):
+            return snapshot
+    except Exception:
+        pass
+    return None
+
+
+def _run_capture(cmd: list[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, _stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        stdout, _stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, None)
+
+
+def _accessibility_ok() -> tuple[bool, str]:
+    try:
+        result = _run_capture(
+            ["/usr/bin/osascript", "-e", 'tell application "System Events" to count application processes'],
+            timeout=3.0,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "System Events accessibility probe timed out"
+    if result.returncode == 0:
+        return True, ""
+    return False, " ".join(result.stdout.split())[:500]
+
+
+def _approver_applescript() -> str:
+    # Start with the frontmost process, then scan a short allowlist of helper
+    # processes. macOS privacy prompts for SkyComputerUseService can appear as
+    # non-frontmost windows, so frontmost-only scanning misses exactly the
+    # first-use AppData prompt we need to approve.
+    return r'''
+set safeProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "SecurityAgent", "securityagent", "Little Snitch Agent", "Little Snitch"}
+set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "SecurityAgent", "securityagent", "Little Snitch Agent", "Little Snitch"}
+set safeNeedles to {"Codex", "Computer Use", "Codex Computer Use", "SkyComputerUse", "Google Chrome", "Chrome", "Safari", "browser", "Browser", "chatgpt.com", "Terminal", "Little Snitch", "network", "firewall", "incoming connections", "eingehende Verbindungen", "control", "steuern", "Daten aus anderen Apps", "anderen Apps", "App-Daten", "Datenschutz und Sicherheit"}
+set strongButtons to {"Always Allow", "Immer erlauben", "Immer zulassen", "Allow", "Erlauben", "Zulassen", "Open", "Oeffnen", "Öffnen", "Continue", "Fortfahren"}
+set weakButtons to {"OK", "Done", "Fertig"}
+
+using terms from application "System Events"
+
+on containsAny(theText, needles)
+	repeat with needle in needles
+		if theText contains (needle as text) then return true
+	end repeat
+	return false
+end containsAny
+
+on listContains(theList, theItem)
+	repeat with candidateItem in theList
+		if (candidateItem as text) is (theItem as text) then return true
+	end repeat
+	return false
+end listContains
+
+on collectContainerText(containerRef)
+	set collectedText to ""
+	try
+		set collectedText to collectedText & " " & (name of containerRef as text)
+	end try
+	try
+		set collectedText to collectedText & " " & ((name of every button of containerRef) as text)
+	end try
+	try
+		set collectedText to collectedText & " " & ((name of every static text of containerRef) as text)
+	end try
+	try
+		set collectedText to collectedText & " " & ((value of every static text of containerRef) as text)
+	end try
+	return collectedText
+end collectContainerText
+
+on approveContainer(processName, containerRef, containerLabel, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+	set candidateButton to ""
+	set isStrongButton to false
+	repeat with buttonName in strongButtons
+		try
+			if exists button (buttonName as text) of containerRef then
+				set candidateButton to (buttonName as text)
+				set isStrongButton to true
+				exit repeat
+			end if
+		end try
+	end repeat
+	if candidateButton is "" then
+		repeat with buttonName in weakButtons
+			try
+				if exists button (buttonName as text) of containerRef then
+					set candidateButton to (buttonName as text)
+					set isStrongButton to false
+					exit repeat
+				end if
+			end try
+		end repeat
+	end if
+	if candidateButton is "" then return ""
+	set containerText to my collectContainerText(containerRef)
+	set processIsSafe to my listContains(safeProcessNames, processName)
+	set textIsSafe to my containsAny(containerText, safeNeedles)
+	if (isStrongButton and processIsSafe and textIsSafe) or ((not isStrongButton) and textIsSafe) then
+		try
+			click button candidateButton of containerRef
+			return "clicked|" & (processName as text) & "|" & candidateButton & "|" & (containerLabel as text)
+		end try
+	end if
+	return ""
+end approveContainer
+
+on approveProcess(processName, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+	tell application "System Events"
+		try
+			with timeout of 1 second
+				tell application process (processName as text)
+					repeat with candidateWindow in windows
+						set windowLabel to ""
+						try
+							set windowLabel to (name of candidateWindow as text)
+						end try
+						if windowLabel is "" then set windowLabel to "window"
+						set approvalResult to my approveContainer(processName, candidateWindow, windowLabel, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+						if approvalResult is not "" then return approvalResult
+						try
+							repeat with candidateSheet in sheets of candidateWindow
+								set sheetLabel to windowLabel
+								try
+									set sheetLabel to windowLabel & "/" & (name of candidateSheet as text)
+								end try
+								set approvalResult to my approveContainer(processName, candidateSheet, sheetLabel, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+								if approvalResult is not "" then return approvalResult
+							end repeat
+						end try
+					end repeat
+				end tell
+			end timeout
+		end try
+	end tell
+	return ""
+end approveProcess
+
+set frontProcessName to ""
+set liveProcessNames to {}
+tell application "System Events"
+	try
+		with timeout of 3 seconds
+			set liveProcessNames to name of every application process
+		end timeout
+	end try
+	try
+		with timeout of 3 seconds
+			set frontProcessName to (name of first application process whose frontmost is true) as text
+		end timeout
+	end try
+end tell
+
+if frontProcessName is not "" then
+	set approvalResult to my approveProcess(frontProcessName, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+	if approvalResult is not "" then return approvalResult
+end if
+
+repeat with processName in scanProcessNames
+	if ((processName as text) is not frontProcessName) and my listContains(liveProcessNames, processName as text) then
+		set approvalResult to my approveProcess(processName as text, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+		if approvalResult is not "" then return approvalResult
+	end if
+end repeat
+
+return "no-op"
+end using terms from
+'''.strip()
+
+
+def approve_once(*, source: str = "manual") -> dict[str, Any]:
+    accessibility_ok, accessibility_error = _accessibility_ok()
+    if not accessibility_ok:
+        payload = {
+            "ok": False,
+            "accessibility_ok": False,
+            "clicked": False,
+            "error": accessibility_error,
+            "source": source,
+        }
+        _write_status(payload, daemon=source == "daemon")
+        return payload
+
+    try:
+        result = _run_capture(
+            ["/usr/bin/osascript", "-e", _approver_applescript()],
+            timeout=APPROVAL_SCAN_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        payload = {
+            "ok": False,
+            "accessibility_ok": True,
+            "clicked": False,
+            "result": "timeout",
+            "source": source,
+        }
+        _log("info", "dialog approval probe timed out", source=source)
+        _write_status(payload, daemon=source == "daemon")
+        return payload
+
+    output = " ".join(result.stdout.split())
+    clicked = output.startswith("clicked|")
+    transient_ui_race = "Ungültiger Index" in output or "Invalid index" in output
+    payload = {
+        "ok": result.returncode == 0 or transient_ui_race,
+        "accessibility_ok": True,
+        "clicked": clicked,
+        "result": ("transient-ui-race: " + output if transient_ui_race else output)[:800],
+        "source": source,
+    }
+    if clicked:
+        parts = output.split("|", 3)
+        if len(parts) == 4:
+            payload.update({"process": parts[1], "button": parts[2], "window": parts[3]})
+        _log("info", "approved routine local dialog", result=output)
+    elif result.returncode != 0:
+        _log("info", "dialog approval probe failed", result=output)
+    _write_status(payload, daemon=source == "daemon")
+    return payload
+
+
+def _bootstrap_script() -> str:
+    return f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+MAIN = Path({str(MAIN)!r})
+BACKUP = Path({str(BACKUP)!r})
+LOG = Path({str(CODEX_HOME / "logs" / "dialog-autopilot.bootstrap.log.jsonl")!r})
+
+
+def log(level: str, message: str, **fields: object) -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        payload = {{"ts": int(time.time()), "level": level, "message": message}}
+        if fields:
+            payload["fields"] = fields
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+    except Exception:
+        pass
+
+
+needs_restore = (not MAIN.is_file()) or (MAIN.is_file() and MAIN.stat().st_size < 1000)
+if needs_restore and BACKUP.is_file():
+    MAIN.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MAIN.with_name(MAIN.name + f".restore-{{os.getpid()}}")
+    shutil.copy2(BACKUP, tmp)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, MAIN)
+    log("info", "restored dialog autopilot from bootstrap backup", main=str(MAIN), backup=str(BACKUP))
+if MAIN.is_file() and not os.access(MAIN, os.X_OK):
+    os.chmod(MAIN, 0o755)
+
+if not MAIN.is_file():
+    log("error", "dialog autopilot missing and bootstrap backup unavailable", main=str(MAIN), backup=str(BACKUP))
+    raise SystemExit(127)
+
+os.execv(str(MAIN), [str(MAIN), *sys.argv[1:]])
+"""
+
+
+def _launch_agent_payload() -> dict[str, Any]:
+    return {
+        "Label": LAUNCH_AGENT_LABEL,
+        "ProgramArguments": [str(BOOTSTRAP), "daemon"],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 10,
+        "StandardErrorPath": str(CODEX_HOME / "logs" / "dialog-autopilot.launchd.err.log"),
+        "StandardOutPath": str(CODEX_HOME / "logs" / "dialog-autopilot.launchd.out.log"),
+    }
+
+
+def _write_bootstrap_assets() -> bool:
+    changed = False
+    SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
+    source = Path(__file__).resolve()
+    if source.is_file():
+        if not BACKUP.exists() or source.read_bytes() != BACKUP.read_bytes():
+            tmp = BACKUP.with_name(BACKUP.name + f".tmp-{os.getpid()}")
+            shutil.copy2(source, tmp)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, BACKUP)
+            changed = True
+    bootstrap = _bootstrap_script()
+    current = BOOTSTRAP.read_text(encoding="utf-8") if BOOTSTRAP.exists() else ""
+    if current != bootstrap:
+        tmp = BOOTSTRAP.with_name(BOOTSTRAP.name + f".tmp-{os.getpid()}")
+        tmp.write_text(bootstrap, encoding="utf-8")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, BOOTSTRAP)
+        changed = True
+    elif not os.access(BOOTSTRAP, os.X_OK):
+        os.chmod(BOOTSTRAP, 0o755)
+        changed = True
+    return changed
+
+
+def _write_launch_agent() -> bool:
+    desired = _launch_agent_payload()
+    current: dict[str, Any] | None = None
+    if LAUNCH_AGENT.exists():
+        try:
+            with LAUNCH_AGENT.open("rb") as fh:
+                current = plistlib.load(fh)
+        except Exception:
+            current = None
+    if current == desired:
+        return False
+    LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
+    tmp = LAUNCH_AGENT.with_name(LAUNCH_AGENT.name + f".tmp-{os.getpid()}")
+    with tmp.open("wb") as fh:
+        plistlib.dump(desired, fh, sort_keys=True)
+    os.replace(tmp, LAUNCH_AGENT)
+    return True
+
+
+def _launch_agent_config_ok() -> bool:
+    if not LAUNCH_AGENT.is_file():
+        return False
+    try:
+        with LAUNCH_AGENT.open("rb") as fh:
+            return plistlib.load(fh) == _launch_agent_payload()
+    except Exception:
+        return False
+
+
+def _launch_agent_loaded() -> bool:
+    try:
+        result = _run_capture(
+            ["/bin/launchctl", "print", f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"],
+            timeout=2.0,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _launch_agent_loaded_for(label: str) -> bool:
+    try:
+        result = _run_capture(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"], timeout=2.0)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _legacy_launch_agent_labels() -> list[str]:
+    return sorted(set(LEGACY_LAUNCH_AGENT_LABELS))
+
+
+def _cleanup_legacy_launch_agents() -> bool:
+    changed = False
+    for label in _legacy_launch_agent_labels():
+        if _launch_agent_loaded_for(label):
+            subprocess.run(
+                ["/bin/launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=2.0,
+            )
+            changed = True
+        path = HOME / "Library" / "LaunchAgents" / f"{label}.plist"
+        if path.exists():
+            try:
+                path.unlink()
+                changed = True
+            except Exception as exc:  # noqa: BLE001
+                _log("error", "failed to remove legacy dialog autopilot LaunchAgent", label=label, error=str(exc))
+    return changed
+
+
+def _daemon_health() -> dict[str, Any]:
+    snapshot = _read_status(daemon=True)
+    if not snapshot:
+        return {"ok": False, "error": "missing daemon status snapshot"}
+    ts = snapshot.get("ts")
+    payload = snapshot.get("payload")
+    if not isinstance(ts, (int, float)) or not isinstance(payload, dict):
+        return {"ok": False, "error": "invalid daemon status snapshot"}
+    age = time.time() - float(ts)
+    ok = bool(payload.get("ok") and payload.get("accessibility_ok") and age <= DAEMON_STATUS_MAX_AGE_SECONDS)
+    result: dict[str, Any] = {
+        "ok": ok,
+        "age_seconds": round(age, 3),
+        "accessibility_ok": bool(payload.get("accessibility_ok")),
+        "clicked": bool(payload.get("clicked")),
+        "result": str(payload.get("result", ""))[:300],
+    }
+    if payload.get("error"):
+        result["error"] = str(payload.get("error"))[:500]
+    return result
+
+
+def install() -> dict[str, Any]:
+    assets_changed = _write_bootstrap_assets()
+    plist_changed = _write_launch_agent()
+    loaded = _launch_agent_loaded()
+    if loaded and (plist_changed or assets_changed):
+        subprocess.run(
+            ["/bin/launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2.0,
+        )
+        loaded = False
+    if not loaded:
+        subprocess.run(
+            ["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(LAUNCH_AGENT)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2.0,
+        )
+        loaded = _launch_agent_loaded()
+    legacy_changed = _cleanup_legacy_launch_agents() if loaded else False
+    accessibility_ok, accessibility_error = _accessibility_ok()
+    payload = {
+        "ok": loaded and _launch_agent_config_ok() and BOOTSTRAP.is_file() and BACKUP.is_file() and accessibility_ok,
+        "launch_agent_loaded": loaded,
+        "launch_agent_config_ok": _launch_agent_config_ok(),
+        "bootstrap_exists": BOOTSTRAP.is_file(),
+        "backup_exists": BACKUP.is_file(),
+        "accessibility_ok": accessibility_ok,
+        "accessibility_error": accessibility_error,
+        "changed": assets_changed or plist_changed or legacy_changed,
+    }
+    if loaded:
+        time.sleep(min(POLL_SECONDS + 0.5, 3.0))
+        daemon_health = _daemon_health()
+        payload["daemon_health"] = daemon_health
+    _write_status(payload)
+    return payload
+
+
+def status() -> dict[str, Any]:
+    accessibility_ok, accessibility_error = _accessibility_ok()
+    launch_agent_loaded = _launch_agent_loaded()
+    daemon_health = _daemon_health() if launch_agent_loaded else {"ok": False, "error": "launch agent not loaded"}
+    payload = {
+        "ok": launch_agent_loaded
+        and _launch_agent_config_ok()
+        and BOOTSTRAP.is_file()
+        and BACKUP.is_file()
+        and accessibility_ok,
+        "launch_agent_loaded": launch_agent_loaded,
+        "launch_agent_config_ok": _launch_agent_config_ok(),
+        "bootstrap_exists": BOOTSTRAP.is_file(),
+        "backup_exists": BACKUP.is_file(),
+        "accessibility_ok": accessibility_ok,
+        "accessibility_error": accessibility_error,
+        "daemon_health": daemon_health,
+    }
+    _write_status(payload)
+    return payload
+
+
+def daemon() -> int:
+    _log("info", "dialog autopilot started", poll_seconds=POLL_SECONDS)
+    while True:
+        approve_once(source="daemon")
+        time.sleep(POLL_SECONDS)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Codex routine local dialog autopilot")
+    parser.add_argument("command", choices=["once", "daemon", "install", "status"])
+    parser.add_argument("--json", action="store_true", help="print JSON for install/status/once")
+    args = parser.parse_args()
+
+    if args.command == "daemon":
+        return daemon()
+    if args.command == "once":
+        payload = approve_once()
+    elif args.command == "install":
+        payload = install()
+    else:
+        payload = status()
+
+    if args.json or args.command in {"status", "install"}:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if payload.get("ok", False) or args.command == "once" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

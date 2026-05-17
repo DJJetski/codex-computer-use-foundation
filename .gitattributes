@@ -1,0 +1,10 @@
+docs/internal/** export-ignore
+state/** export-ignore
+scratch/** export-ignore
+var/** export-ignore
+snapshots/** export-ignore
+rollback/** export-ignore
+*.secret export-ignore
+*.secrets export-ignore
+*.env export-ignore
+*.env.* export-ignore

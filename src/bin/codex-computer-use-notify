@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+CODEX_HOME = HOME / ".codex"
+LOG = CODEX_HOME / "logs" / "computer-use-notify.log.jsonl"
+CODEX_APP = Path(os.environ.get("CODEX_CU_CODEX_APP", "/Applications/Codex.app")).expanduser()
+NATIVE_BINARY_CANDIDATES = [
+    CODEX_HOME / "plugins" / "marketplaces" / "openai-bundled" / "plugins" / "computer-use" / "Codex Computer Use.app" / "Contents" / "SharedSupport" / "SkyComputerUseClient.app" / "Contents" / "MacOS" / "SkyComputerUseClient",
+    CODEX_APP / "Contents" / "Resources" / "plugins" / "openai-bundled" / "plugins" / "computer-use" / "Codex Computer Use.app" / "Contents" / "SharedSupport" / "SkyComputerUseClient.app" / "Contents" / "MacOS" / "SkyComputerUseClient",
+    CODEX_HOME / "computer-use" / "Codex Computer Use.app" / "Contents" / "SharedSupport" / "SkyComputerUseClient.app" / "Contents" / "MacOS" / "SkyComputerUseClient",
+]
+TIMEOUT_SECONDS = float(os.environ.get("CODEX_CU_NOTIFY_TIMEOUT", "4"))
+
+
+def log(level: str, message: str, **fields: object) -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"ts": int(time.time()), "level": level, "message": message}
+        if fields:
+            payload["fields"] = fields
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
+
+
+def cleanup_native_turn_ended() -> list[int]:
+    killed: list[int] = []
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-axo", "pid=,command="],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except Exception:
+        return killed
+    needles = [str(path) + " turn-ended" for path in NATIVE_BINARY_CANDIDATES]
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line or not any(needle in line for needle in needles):
+            continue
+        pid_text, _, _command = line.partition(" ")
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except Exception:
+            pass
+    return killed
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in {"--help", "-h", "help"}:
+        print("USAGE: codex-computer-use-notify turn-ended [payload]")
+        return 0
+    native_binary = next((path for path in NATIVE_BINARY_CANDIDATES if path.is_file() and os.access(path, os.X_OK)), None)
+    if native_binary is None:
+        log("info", "native notify binary missing; ignoring", candidates=[str(path) for path in NATIVE_BINARY_CANDIDATES], argv=sys.argv[1:])
+        cleanup_native_turn_ended()
+        return 0
+    proc = subprocess.Popen(
+        [str(native_binary), *sys.argv[1:]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        proc.wait(timeout=TIMEOUT_SECONDS)
+        if proc.returncode not in (0, None):
+            log("info", "native notify exited non-zero", returncode=proc.returncode, argv=sys.argv[1:])
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        log("info", "native notify timed out and was killed", timeout=TIMEOUT_SECONDS, argv=sys.argv[1:])
+    killed = cleanup_native_turn_ended()
+    if killed:
+        log("info", "cleaned native notify stragglers", killed=killed, argv=sys.argv[1:])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

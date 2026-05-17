@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Explicit preflight for repaired native Codex Computer Use.
+
+This helper repairs/checks the native Computer Use configuration only. It does
+not start VPN, change network routes, or launch fallback automation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path.home()
+CODEX_HOME = HOME / ".codex"
+GUARD = CODEX_HOME / "bin" / "codex-computer-use-guard"
+
+
+def run(cmd: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+
+
+def cleanup_service_probe_processes(binary: str) -> None:
+    try:
+        result = run(["/bin/ps", "-axo", "pid=,command="], timeout=2)
+    except Exception:
+        return
+    exact_command = f"{binary} --help"
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        pid_text, _, command = stripped.partition(" ")
+        if command != exact_command:
+            continue
+        try:
+            subprocess.run(
+                ["/bin/kill", pid_text],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=1,
+            )
+        except Exception:
+            pass
+
+
+def run_guard(command: str, *, emit: bool = True) -> tuple[int, dict[str, object]]:
+    if not GUARD.is_file():
+        print(f"missing Computer Use guard: {GUARD}", file=sys.stderr)
+        return 1, {}
+    result = run([str(GUARD), command], timeout=20)
+    if emit:
+        print(result.stdout.rstrip())
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        payload = {}
+    return result.returncode, payload
+
+
+def runtime_probe(payload: dict[str, object]) -> tuple[bool, str]:
+    binary = payload.get("binary")
+    if not binary:
+        return False, "Computer Use runtime probe missing native binary path."
+
+    probe = run([str(binary), "--help"], timeout=10)
+    if probe.returncode == 0:
+        return True, ""
+
+    tail = "\n".join(probe.stdout.rstrip().splitlines()[-6:])
+    return False, tail or f"native binary exited with {probe.returncode}"
+
+
+def service_runtime_probe(payload: dict[str, object]) -> tuple[bool, str]:
+    binary = payload.get("service_binary")
+    if not binary:
+        return False, "Computer Use service runtime probe missing native service path."
+
+    try:
+        probe = run([str(binary), "--help"], timeout=2)
+    except subprocess.TimeoutExpired:
+        cleanup_service_probe_processes(str(binary))
+        return True, ""
+    finally:
+        cleanup_service_probe_processes(str(binary))
+    if probe.returncode == 0:
+        return True, ""
+
+    tail = "\n".join(probe.stdout.rstrip().splitlines()[-6:])
+    if "_swift_task_addPriorityEscalationHandler" in tail:
+        return False, tail
+    return True, tail
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Explicit preflight for native Codex Computer Use")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status", help="Repair/check native Computer Use state without changing network routes")
+    sub.add_parser("ensure", help="Repair native Computer Use state without changing network routes")
+    sub.add_parser("connect", help="Deprecated alias for `ensure`; does not connect VPN")
+    args = parser.parse_args()
+
+    guard_command = "status" if args.command == "status" else "ensure"
+    guard_code, payload = run_guard(guard_command, emit=args.command != "status")
+    if args.command == "status":
+        guard_operational_ok = bool(payload.get("ok"))
+        structural_ok = bool(payload.get("structural_ok")) or (guard_code == 0 and bool(payload.get("ok")))
+        runtime_ok, runtime_error = runtime_probe(payload) if structural_ok else (False, "")
+        service_privacy = payload.get("service_appdata_privacy")
+        service_privacy_ok = isinstance(service_privacy, dict) and bool(service_privacy.get("ok"))
+        if not structural_ok:
+            service_runtime_ok, service_runtime_error = (False, "")
+        elif service_privacy_ok or bool(payload.get("service_runtime_ok")):
+            service_runtime_ok, service_runtime_error = (
+                True,
+                "skipped service runtime probe because guard reports persisted AppData/service readiness",
+            )
+        else:
+            service_runtime_ok, service_runtime_error = service_runtime_probe(payload)
+        payload["structural_ok"] = structural_ok
+        payload["runtime_ok"] = runtime_ok
+        payload["service_runtime_ok"] = service_runtime_ok
+        payload["runtime_probe_ok"] = runtime_ok and service_runtime_ok
+        if runtime_error:
+            payload["runtime_error"] = runtime_error
+        if service_runtime_error:
+            payload["service_runtime_error"] = service_runtime_error
+        payload["ok"] = guard_operational_ok and runtime_ok and service_runtime_ok
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["ok"] else 1
+    if args.command == "connect":
+        print("Computer Use preflight no longer connects VPN; use `codex-vpn` for explicit VPN tasks.")
+    return guard_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

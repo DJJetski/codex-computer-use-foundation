@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Historical compatibility alias. Normal Computer Use routing is plugin-only
+# through codex-computer-use-native-launcher; this file intentionally provides
+# no local macOS automation fallback.
+exec "$HOME/.codex/bin/codex-computer-use-native-launcher" "$@"

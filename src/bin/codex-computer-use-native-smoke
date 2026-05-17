@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Compatibility wrapper for the guard-owned native Computer Use smoke."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+GUARD_BIN = Path.home() / ".codex" / "bin" / "codex-computer-use-guard"
+
+
+def main() -> int:
+    if not GUARD_BIN.is_file():
+        print(f"missing guard binary: {GUARD_BIN}", file=sys.stderr)
+        return 1
+    result = subprocess.run(
+        [str(GUARD_BIN), "fresh-smoke"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.stdout:
+        print(result.stdout.rstrip())
+    return result.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

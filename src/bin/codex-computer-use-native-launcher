@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${CODEX_CU_LAUNCHER_SKIP_GUARD:-}" != "1" ]]; then
+  "$HOME/.codex/bin/codex-computer-use-guard" ensure-config --quiet >/dev/null 2>&1 || true
+fi
+
+codex_app="${CODEX_CU_CODEX_APP:-/Applications/Codex.app}"
+native_candidates=(
+  "$HOME/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/"Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$codex_app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+)
+
+for native_binary in "${native_candidates[@]}"; do
+  if [[ -x "$native_binary" ]]; then
+    exec "$native_binary" "$@"
+  fi
+done
+
+echo "no executable native Computer Use client found" >&2
+exit 127

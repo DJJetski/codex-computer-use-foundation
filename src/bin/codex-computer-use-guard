@@ -1,0 +1,3340 @@
+#!/usr/bin/env python3
+"""Repair native Codex Computer Use plugin routing and runtime state.
+
+This is intentionally small and idempotent. It repairs what Codex needs before
+tool discovery: the enabled plugin stanza in config.toml, tool-suggestion
+allowlisting, the patched local bundled-marketplace mirror, the plugin cache
+entry for the app-bundled Computer Use package, the native MCP server command,
+the local runtime compatibility patch when required, the canonical skill
+metadata, and the login LaunchAgent.
+"""
+
+from __future__ import annotations
+
+import fcntl
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+import plistlib
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+HOME = Path.home()
+CODEX_HOME = HOME / ".codex"
+CONFIG = CODEX_HOME / "config.toml"
+LOCK = CODEX_HOME / ".computer-use-guard.lock"
+LOG = CODEX_HOME / "logs" / "computer-use-guard.log.jsonl"
+STATE_DIR = CODEX_HOME / "state" / "computer-use-guard"
+STATUS_SNAPSHOT = STATE_DIR / "last-status.json"
+NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke.json"
+UNVERIFIED_NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke-unverified.json"
+NATIVE_SMOKE_MAX_AGE_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_MAX_AGE_SECONDS", "900"))
+NATIVE_SMOKE_TIMEOUT_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_TIMEOUT_SECONDS", "120"))
+DUPLICATE_MCP_GRACE_SECONDS = int(os.environ.get("CODEX_CU_DUPLICATE_MCP_GRACE_SECONDS", "30"))
+USER_TCC_DB = HOME / "Library" / "Application Support" / "com.apple.TCC" / "TCC.db"
+APPDATA_PRIVACY_MARKER = STATE_DIR / "service-appdata-privacy-ok.json"
+CANONICAL_COMPUTER_USE_SKILL = CODEX_HOME / "skills" / "macos-computer-use" / "SKILL.md"
+MAIN_GUARD = CODEX_HOME / "bin" / "codex-computer-use-guard"
+BOOTSTRAP_DIR = HOME / "Library" / "Application Support" / "CodexComputerUseGuard"
+BOOTSTRAP = BOOTSTRAP_DIR / "codex-computer-use-guard-bootstrap"
+GUARD_BACKUP = BOOTSTRAP_DIR / "codex-computer-use-guard.backup"
+BROKER_BACKUP = BOOTSTRAP_DIR / "codex-computer-use-broker.backup"
+LAUNCH_AGENT_LABEL = "io.github.codex-computer-use-foundation.guard"
+LEGACY_LAUNCH_AGENT_LABELS: tuple[str, ...] = ()
+LAUNCH_AGENT = HOME / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
+LAUNCH_AGENT_START_INTERVAL_SECONDS = 5
+DIALOG_AUTOPILOT = CODEX_HOME / "bin" / "codex-dialog-autopilot"
+COMPUTER_USE_BROKER = CODEX_HOME / "bin" / "codex-computer-use-broker"
+COMPUTER_USE_NATIVE_LAUNCHER = CODEX_HOME / "bin" / "codex-computer-use-native-launcher"
+COMPUTER_USE_NOTIFY = CODEX_HOME / "bin" / "codex-computer-use-notify"
+LSREGISTER = Path(
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+    "LaunchServices.framework/Support/lsregister"
+)
+
+OPENAI_CODEX_APP = Path(os.environ.get("CODEX_CU_CODEX_APP", "/Applications/Codex.app")).expanduser()
+OPENAI_CODEX_EXEC = OPENAI_CODEX_APP / "Contents" / "Resources" / "codex"
+OPENAI_CODEX_BUNDLE_ID = "com.openai.codex"
+WAVES_CODEX_BUNDLE_ID = "com.WavesAudio.CODEX"
+COMPUTER_USE_SERVICE_BUNDLE_ID = "com.openai.sky.CUAService"
+OPENAI_TEAM_ID = "2DC432GLL2"
+
+BUNDLED_MARKETPLACE = OPENAI_CODEX_APP / "Contents" / "Resources" / "plugins" / "openai-bundled"
+COMPUTER_USE_SOURCE = BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+PATCHED_BUNDLED_MARKETPLACE = CODEX_HOME / "plugins" / "marketplaces" / "openai-bundled"
+TMP_BUNDLED_MARKETPLACE = CODEX_HOME / ".tmp" / "bundled-marketplaces" / "openai-bundled"
+CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "computer-use"
+RUNTIME_BASE = CODEX_HOME / "computer-use"
+RUNTIME_APP = RUNTIME_BASE / "Codex Computer Use.app"
+SIGNED_MARKETPLACE_APP = PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use" / "Codex Computer Use.app"
+PLUGIN_MCP_WRAPPER = "codex-computer-use-mcp"
+NATIVE_MCP_COMMAND = (
+    "./Codex Computer Use.app/Contents/SharedSupport/"
+    "SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+)
+PLUGIN_SKILL_SUPPRESSED_NOTICE = """# Computer Use Plugin Skill Suppressed
+
+This plugin still owns native Computer Use MCP discovery through `.mcp.json`.
+Its bundled `skills/` entry is intentionally removed so users see only the
+canonical Computer Use skill from `~/.codex/skills/macos-computer-use/SKILL.md`.
+"""
+CANONICAL_SKILL_AGENT_METADATA = """interface:
+  display_name: "Computer Use"
+  short_description: "Control the real Mac with native Computer Use"
+  default_prompt: "Use $computer-use and native mcp__computer_use__ tools first; do not use GUI fallbacks for native-only requests."
+
+policy:
+  allow_implicit_invocation: true
+"""
+MISSING_PRIORITY_ESCALATION_SYMBOL = "_swift_task_addPriorityEscalationHandler"
+PRIORITY_ESCALATION_SHIM_SOURCE = r"""
+typedef void (*EscalationHandler)(unsigned char oldPriority, unsigned char newPriority);
+
+__attribute__((swiftcall)) void *swift_task_addPriorityEscalationHandler(
+    EscalationHandler handler,
+    void *handlerContext
+) {
+    (void)handler;
+    (void)handlerContext;
+    return (void *)0;
+}
+
+__attribute__((swiftcall)) void swift_task_removePriorityEscalationHandler(void *record) {
+    (void)record;
+}
+""".strip()
+
+PLUGIN_HEADER = '[plugins."computer-use@openai-bundled"]'
+BROWSER_HEADER = '[plugins."browser-use@openai-bundled"]'
+MARKETPLACE_HEADER = "[marketplaces.openai-bundled]"
+DIRECT_MCP_HEADER = "[mcp_servers.computer-use]"
+DIRECT_MCP_ALIAS_HEADER = "[mcp_servers.computer-use-native]"
+DIRECT_MCP_UNDERSCORE_HEADER = "[mcp_servers.computer_use]"
+DIRECT_MCP_UNDERSCORE_ALIAS_HEADER = "[mcp_servers.computer_use_native]"
+DIRECT_MCP_HEADERS = [DIRECT_MCP_HEADER]
+LEGACY_DIRECT_MCP_HEADERS = [
+    DIRECT_MCP_ALIAS_HEADER,
+    DIRECT_MCP_UNDERSCORE_HEADER,
+    DIRECT_MCP_UNDERSCORE_ALIAS_HEADER,
+]
+ALL_DIRECT_MCP_HEADERS = DIRECT_MCP_HEADERS + LEGACY_DIRECT_MCP_HEADERS
+TOOL_SUGGEST_HEADER = "[tool_suggest]"
+COMPUTER_USE_PLUGIN_ID = "computer-use@openai-bundled"
+COMPUTER_USE_DISABLED_TOOL_RE = re.compile(
+    r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"computer-use@openai-bundled"\s*\}'
+)
+COMPUTER_USE_DISABLED_TOOL_TEXT_RE = re.compile(
+    r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"computer-use@openai-bundled"\s*\}',
+    re.DOTALL,
+)
+
+
+def _self_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def _app_bundle_identifier(app_path: Path) -> str:
+    info_plist = app_path / "Contents" / "Info.plist"
+    try:
+        with info_plist.open("rb") as fh:
+            payload = plistlib.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"cannot read app bundle identifier from {info_plist}: {exc}") from exc
+    bundle_id = str(payload.get("CFBundleIdentifier") or "").strip()
+    if not bundle_id:
+        raise RuntimeError(f"missing CFBundleIdentifier in {info_plist}")
+    return bundle_id
+
+
+def _codesign_team_identifier(path: Path) -> str:
+    result = _run_capture(["/usr/bin/codesign", "-dv", "--verbose=2", str(path)], timeout=10)
+    for line in result.stdout.splitlines():
+        if line.startswith("TeamIdentifier="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _is_openai_signed(path: Path) -> bool:
+    return path.exists() and _codesign_team_identifier(path) == OPENAI_TEAM_ID
+
+
+def _verify_openai_codex_app() -> str:
+    bundle_id = _app_bundle_identifier(OPENAI_CODEX_APP)
+    if bundle_id != OPENAI_CODEX_BUNDLE_ID:
+        if bundle_id == WAVES_CODEX_BUNDLE_ID:
+            raise RuntimeError(
+                f"{OPENAI_CODEX_APP} resolves to Waves CODEX ({bundle_id}), not OpenAI Codex"
+            )
+        raise RuntimeError(
+            f"{OPENAI_CODEX_APP} has bundle id {bundle_id}, expected {OPENAI_CODEX_BUNDLE_ID}"
+        )
+    return bundle_id
+
+
+def _log(level: str, message: str, **fields: Any) -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "ts": int(time.time()),
+            "level": level,
+            "message": message,
+        }
+        if fields:
+            payload["fields"] = fields
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except Exception:
+        pass
+
+
+def _write_status_snapshot(payload: dict[str, Any]) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        snapshot = {
+            "ts": int(time.time()),
+            "payload": payload,
+        }
+        tmp = STATUS_SNAPSHOT.with_name(STATUS_SNAPSHOT.name + f".tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, STATUS_SNAPSHOT)
+    except Exception:
+        pass
+
+
+def _write_native_smoke(payload: dict[str, Any]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = NATIVE_SMOKE_STATUS.with_name(NATIVE_SMOKE_STATUS.name + f".tmp-{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, NATIVE_SMOKE_STATUS)
+
+
+def _load_native_smoke_raw() -> dict[str, Any] | None:
+    try:
+        with NATIVE_SMOKE_STATUS.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _native_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = payload if payload is not None else _load_native_smoke_raw()
+    now = int(time.time())
+    if raw is None:
+        return {
+            "ok": False,
+            "fresh": False,
+            "authoritative": False,
+            "appserver_rendezvous": False,
+            "operational": False,
+            "second_mouse_verified": False,
+            "failure_class": "no_native_smoke_record",
+            "error": f"no native smoke record at {NATIVE_SMOKE_STATUS}",
+            "path": str(NATIVE_SMOKE_STATUS),
+            "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
+        }
+    recorded_at = int(raw.get("recorded_at") or 0)
+    age_seconds = max(0, now - recorded_at) if recorded_at else None
+    fresh = recorded_at > 0 and age_seconds is not None and age_seconds <= NATIVE_SMOKE_MAX_AGE_SECONDS
+    source = str(raw.get("source") or "")
+    fallback_used = bool(raw.get("fallback_used"))
+    verified_by_guard_runner = bool(raw.get("verified_by_guard_runner"))
+    authoritative = source == "codex_app_mcp_tool" and verified_by_guard_runner and not fallback_used
+    list_apps_ok = bool(raw.get("list_apps_ok"))
+    list_apps_repeat_ok = bool(raw.get("list_apps_repeat_ok"))
+    get_app_state_ok = bool(raw.get("get_app_state_ok"))
+    structured_events_found = bool(raw.get("structured_events_found"))
+    interaction_ok = bool(raw.get("interaction_ok"))
+    second_mouse_seen = bool(raw.get("second_mouse_verified"))
+    failure_class = str(raw.get("failure_class") or "")
+    if not authoritative:
+        failure_class = failure_class or "non_authoritative_smoke"
+    elif not fresh:
+        failure_class = failure_class or "stale_native_smoke"
+    elif not list_apps_ok:
+        failure_class = failure_class or "native_list_apps_failed"
+    elif not list_apps_repeat_ok:
+        failure_class = failure_class or "native_list_apps_repeat_failed"
+    elif not get_app_state_ok:
+        failure_class = failure_class or "native_get_app_state_failed"
+    elif not structured_events_found:
+        failure_class = failure_class or "native_smoke_no_structured_events"
+    elif not interaction_ok:
+        failure_class = failure_class or "native_interaction_failed"
+    elif not second_mouse_seen:
+        failure_class = failure_class or "native_second_mouse_not_verified"
+    appserver_rendezvous = authoritative and fresh and list_apps_ok
+    second_mouse_verified = (
+        appserver_rendezvous
+        and list_apps_repeat_ok
+        and get_app_state_ok
+        and structured_events_found
+        and interaction_ok
+        and second_mouse_seen
+    )
+    operational = second_mouse_verified
+    status = dict(raw)
+    status.update(
+        {
+            "ok": operational,
+            "fresh": fresh,
+            "age_seconds": age_seconds,
+            "authoritative": authoritative,
+            "fallback_used": fallback_used,
+            "verified_by_guard_runner": verified_by_guard_runner,
+            "appserver_rendezvous": appserver_rendezvous,
+            "operational": operational,
+            "second_mouse_verified": second_mouse_verified,
+            "failure_class": "" if operational else failure_class,
+            "path": str(NATIVE_SMOKE_STATUS),
+            "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
+        }
+    )
+    return status
+
+
+def _record_native_smoke_from_stdin() -> dict[str, Any]:
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid native smoke JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("native smoke JSON must be an object")
+    payload.setdefault("recorded_at", int(time.time()))
+    payload.setdefault("source", "codex_app_mcp_tool")
+    payload.setdefault("fallback_used", False)
+    payload["verified_by_guard_runner"] = False
+    payload["recorder_pid"] = os.getpid()
+    status = _native_smoke_status(payload)
+    accepted_for_health = os.environ.get("CODEX_CU_ALLOW_UNVERIFIED_SMOKE_RECORD") == "1"
+    status["accepted_for_health"] = accepted_for_health
+    if accepted_for_health:
+        _write_native_smoke(status)
+    else:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        status["path"] = str(UNVERIFIED_NATIVE_SMOKE_STATUS)
+        tmp = UNVERIFIED_NATIVE_SMOKE_STATUS.with_name(
+            UNVERIFIED_NATIVE_SMOKE_STATUS.name + f".tmp-{os.getpid()}"
+        )
+        tmp.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, UNVERIFIED_NATIVE_SMOKE_STATUS)
+    return status
+
+
+def _start_native_smoke_click_server(
+    token: str,
+) -> tuple[str, threading.Event, threading.Event, ThreadingHTTPServer]:
+    clicked = threading.Event()
+    typed = threading.Event()
+    token_js = json.dumps(token)
+
+    class SmokeHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path == "/clicked":
+                values = parse_qs(parsed.query)
+                if values.get("token", [""])[0] == token:
+                    clicked.set()
+                self.send_response(204)
+                self.end_headers()
+                return
+            if parsed.path == "/typed":
+                values = parse_qs(parsed.query)
+                if values.get("token", [""])[0] == token:
+                    typed.set()
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            body = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex Native Computer Use Smoke</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; }}
+    button, input {{ font-size: 18px; padding: 14px 18px; }}
+    input {{ display: block; margin-top: 18px; min-width: 520px; }}
+    #status, #typed-status {{ margin-top: 18px; font-size: 16px; }}
+  </style>
+</head>
+<body>
+  <h1>Codex Native Computer Use Smoke</h1>
+  <button id="native-smoke-button" onclick='document.getElementById("status").textContent="clicked"; fetch("/clicked?token=" + encodeURIComponent({token_js}), {{ cache: "no-store" }});'>Native Smoke Button</button>
+  <input id="native-smoke-input" aria-label="Native Smoke Input" autocomplete="off" spellcheck="false" oninput='if (this.value.includes({token_js})) {{ document.getElementById("typed-status").textContent="typed"; fetch("/typed?token=" + encodeURIComponent({token_js}), {{ cache: "no-store" }}); }}' />
+  <div id="status">ready</div>
+  <div id="typed-status">empty</div>
+</body>
+</html>
+"""
+            data = body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SmokeHandler)
+    thread = threading.Thread(target=server.serve_forever, name="codex-cu-native-smoke-http", daemon=True)
+    thread.start()
+    return f"http://127.0.0.1:{server.server_port}/?token={token}", clicked, typed, server
+
+
+def _codex_exec_json_events(stdout: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            events.append(payload)
+    return events
+
+
+def _completed_mcp_tool_count(events: list[dict[str, Any]], tool: str) -> int:
+    count = 0
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if (
+            item.get("type") == "mcp_tool_call"
+            and item.get("server") == "computer-use"
+            and item.get("tool") == tool
+            and item.get("status") == "completed"
+        ):
+            count += 1
+    return count
+
+
+def _mcp_tool_attempt_count(events: list[dict[str, Any]], tool: str) -> int:
+    count = 0
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "mcp_tool_call" and item.get("server") == "computer-use" and item.get("tool") == tool:
+            count += 1
+    return count
+
+
+def _press_key_event_matches(item: dict[str, Any], *, app: str, key: str) -> bool:
+    if item.get("type") != "mcp_tool_call" or item.get("server") != "computer-use" or item.get("tool") != "press_key":
+        return False
+    arguments = item.get("arguments")
+    return isinstance(arguments, dict) and arguments.get("app") == app and arguments.get("key") == key
+
+
+def _press_key_completed_for(events: list[dict[str, Any]], *, app: str, key: str) -> bool:
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if _press_key_event_matches(item, app=app, key=key) and item.get("status") == "completed":
+            return True
+    return False
+
+
+def _press_key_reported_no_windows(events: list[dict[str, Any]], *, app: str, key: str) -> bool:
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if not _press_key_event_matches(item, app=app, key=key):
+            continue
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        content = result.get("content")
+        if not isinstance(content, list):
+            continue
+        text = "\n".join(str(entry.get("text") or "") for entry in content if isinstance(entry, dict))
+        if item.get("status") == "failed" and "noWindowsAvailable" in text:
+            return True
+    return False
+
+
+def _textedit_close_reported_no_windows(events: list[dict[str, Any]]) -> bool:
+    return _press_key_reported_no_windows(events, app="com.apple.TextEdit", key="super+w")
+
+
+def _agent_message_contains_line(events: list[dict[str, Any]], line: str) -> bool:
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "agent_message":
+            continue
+        text = str(item.get("text") or "")
+        if any(candidate.strip() == line for candidate in text.splitlines()):
+            return True
+    return False
+
+
+def _mcp_tool_result_contains(
+    events: list[dict[str, Any]], tool: str, needle: str, *, app: str | None = None
+) -> bool:
+    for event in events:
+        if event.get("type") != "item.completed":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "mcp_tool_call" or item.get("server") != "computer-use":
+            continue
+        if item.get("tool") != tool:
+            continue
+        if app is not None:
+            arguments = item.get("arguments")
+            if not isinstance(arguments, dict) or arguments.get("app") != app:
+                continue
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        content = result.get("content")
+        if not isinstance(content, list):
+            continue
+        text = "\n".join(str(entry.get("text") or "") for entry in content if isinstance(entry, dict))
+        if needle in text:
+            return True
+    return False
+
+
+def _compact_stdout_tail(stdout: str, *, lines: int = 80, max_line_chars: int = 1200) -> str:
+    compact_lines: list[str] = []
+    for line in stdout.rstrip().splitlines()[-lines:]:
+        if len(line) > max_line_chars:
+            compact_lines.append(line[:max_line_chars] + "...<truncated>")
+        else:
+            compact_lines.append(line)
+    return "\n".join(compact_lines)
+
+
+def _cleanup_native_smoke_temp_files(smoke_file: Path) -> dict[str, Any]:
+    removed: list[str] = []
+    errors: list[str] = []
+    candidates = sorted(smoke_file.parent.glob("codex-cu-native-smoke-*.txt"))
+    if smoke_file not in candidates:
+        candidates.append(smoke_file)
+    for path in candidates:
+        try:
+            if path.exists():
+                path.unlink()
+                removed.append(str(path))
+        except Exception as exc:
+            errors.append(f"{path}: {exc}")
+    return {
+        "removed_count": len(removed),
+        "current_removed": not smoke_file.exists(),
+        "errors": errors,
+    }
+
+
+def _run_native_smoke() -> dict[str, Any]:
+    """Run a fresh Codex-context native MCP smoke and persist only measured results."""
+    if not OPENAI_CODEX_EXEC.is_file():
+        raise RuntimeError(f"missing Codex executable: {OPENAI_CODEX_EXEC}")
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    started_at = int(time.time())
+    token = f"CODEX_NATIVE_CU_SMOKE_{started_at}_{os.getpid()}"
+
+    setup_error = ""
+    click_url = ""
+    click_event: threading.Event | None = None
+    type_event: threading.Event | None = None
+    click_server: ThreadingHTTPServer | None = None
+    safari_click_received = False
+    safari_type_received = False
+    try:
+        click_url, click_event, type_event, click_server = _start_native_smoke_click_server(token)
+        subprocess.run(
+            ["/usr/bin/open", "-a", "Safari", click_url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        time.sleep(1.0)
+    except Exception as exc:
+        setup_error = str(exc)
+
+    success_line = "SUCCESS native_smoke list_apps_twice get_app_state_ok safari_click_type_cleanup_ok"
+    prompt = (
+        "Use only native computer-use MCP tools and follow these numbered steps exactly. "
+        "If the native computer-use tools are not exposed yet, use only Codex tool discovery/search to expose computer-use, then continue. "
+        "Do not call command_execution, shell, or any non-computer-use GUI/control tool. "
+        "1. Call computer-use/list_apps exactly twice. "
+        "2. Call computer-use/get_app_state for Safari using bundle id com.apple.Safari. "
+        "3. Call computer-use/click on the button labeled Native Smoke Button. "
+        "4. Call computer-use/get_app_state for Safari again and confirm the page status is clicked. "
+        "5. Call computer-use/click in the text field labeled Native Smoke Input. "
+        f"6. Call computer-use/type_text with app com.apple.Safari and exactly this token: {token}. "
+        "7. Call computer-use/get_app_state for Safari again and confirm the page status is clicked and typed, with the token visible in the input. "
+        "8. After step 7 completes, call computer-use/press_key with app com.apple.Safari and key super+w to close only the smoke tab or window. "
+        "If step 8 returns noWindowsAvailable after the press_key call, treat that as the smoke tab or window already being closed and continue. "
+        "Do not use shell commands, AppleScript, browser automation, Keyboard Maestro, screenshots, or any fallback. "
+        "You must complete at least two computer-use/click calls and at least one computer-use/type_text call. "
+        "Do not produce the final answer before step 8 is complete. "
+        f"Finish with exactly one final line: {success_line} only if all 8 numbered steps completed; "
+        "otherwise FAILURE and the precise failing step."
+    )
+    cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]
+    timed_out = False
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(HOME / "Codex") if (HOME / "Codex").is_dir() else str(HOME),
+            input="",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=NATIVE_SMOKE_TIMEOUT_SECONDS,
+        )
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        returncode = result.returncode
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
+        stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+        returncode = 124
+    finally:
+        if click_event is not None:
+            safari_click_received = click_event.wait(2)
+        if type_event is not None:
+            safari_type_received = type_event.wait(2)
+        if click_server is not None:
+            try:
+                click_server.shutdown()
+                click_server.server_close()
+            except Exception:
+                pass
+
+    smoke_cleanup = _cleanup_native_smoke_temp_files(
+        Path(tempfile.gettempdir()) / f"codex-cu-native-smoke-{started_at}-{os.getpid()}.txt"
+    )
+
+    events = _codex_exec_json_events(stdout)
+    stdout_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    unstructured_stdout_lines = max(0, len(stdout_lines) - len(events))
+    structured_events_found = bool(events) and unstructured_stdout_lines == 0
+    command_execution_count = sum(
+        1
+        for event in events
+        if isinstance(event.get("item"), dict) and event["item"].get("type") == "command_execution"
+    )
+    first_computer_use_mcp_index = next(
+        (
+            idx
+            for idx, event in enumerate(events)
+            if isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "mcp_tool_call"
+            and event["item"].get("server") == "computer-use"
+        ),
+        None,
+    )
+    allowed_discovery_item_types = {"web_search", "tool_search"}
+
+    def _event_item_summary(event: dict[str, Any]) -> dict[str, Any]:
+        item = event["item"]
+        return {
+            "type": item.get("type"),
+            "server": item.get("server"),
+            "tool": item.get("tool"),
+            "status": item.get("status"),
+        }
+
+    tool_discovery_events = [
+        _event_item_summary(event)
+        for idx, event in enumerate(events)
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") in allowed_discovery_item_types
+        and (first_computer_use_mcp_index is None or idx < first_computer_use_mcp_index)
+    ]
+    non_native_tool_calls = [
+        _event_item_summary(event)
+        for idx, event in enumerate(events)
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") not in {"agent_message", "mcp_tool_call"}
+        and not (
+            event["item"].get("type") in allowed_discovery_item_types
+            and (first_computer_use_mcp_index is None or idx < first_computer_use_mcp_index)
+        )
+    ]
+    non_computer_use_mcp_calls = [
+        {
+            "server": event["item"].get("server"),
+            "tool": event["item"].get("tool"),
+            "status": event["item"].get("status"),
+        }
+        for event in events
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") == "mcp_tool_call"
+        and event["item"].get("server") != "computer-use"
+    ]
+    list_apps_completed = _completed_mcp_tool_count(events, "list_apps")
+    get_app_state_completed = _completed_mcp_tool_count(events, "get_app_state")
+    click_completed = _completed_mcp_tool_count(events, "click")
+    type_text_completed = _completed_mcp_tool_count(events, "type_text") >= 1
+    press_key_completed = _completed_mcp_tool_count(events, "press_key")
+    press_key_attempted = _mcp_tool_attempt_count(events, "press_key")
+    safari_close_completed = _press_key_completed_for(events, app="com.apple.Safari", key="super+w")
+    safari_close_no_windows = _press_key_reported_no_windows(events, app="com.apple.Safari", key="super+w")
+    safari_close_ok = safari_close_completed or safari_close_no_windows
+    cleanup_keypress_ok = safari_close_ok
+    success_marker = _agent_message_contains_line(events, success_line)
+    token_visible_in_safari = _mcp_tool_result_contains(events, "get_app_state", token, app="com.apple.Safari") or (
+        _mcp_tool_result_contains(events, "type_text", token, app="com.apple.Safari")
+    )
+    safari_input_verified = safari_type_received or token_visible_in_safari
+    fallback_patterns = (
+        r"(?im)^\s*(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/)?cliclick\b",
+        r"(?im)^\s*(?:/usr/sbin/|/usr/bin/)?screencapture\b",
+        r"(?im)^\s*(?:/usr/bin/)?osascript\b",
+        r"mcp: keyboard-maestro/",
+        r"mcp: browser-use/",
+        r"mcp: browser/",
+    )
+    fallback_used = (
+        command_execution_count > 0
+        or bool(non_native_tool_calls)
+        or bool(non_computer_use_mcp_calls)
+        or any(re.search(pattern, stdout) for pattern in fallback_patterns)
+    )
+    failure_class = ""
+    error = ""
+    if timed_out:
+        failure_class = "native_smoke_timeout"
+        error = f"codex exec timed out after {NATIVE_SMOKE_TIMEOUT_SECONDS}s"
+    elif returncode != 0:
+        failure_class = "native_smoke_codex_exec_failed"
+        error = f"codex exec exited with {returncode}"
+    elif not structured_events_found:
+        failure_class = "native_smoke_no_structured_events"
+        error = (
+            "codex exec --json produced no structured events"
+            if not events
+            else f"codex exec --json stdout contained {unstructured_stdout_lines} unstructured lines"
+        )
+    elif fallback_used:
+        failure_class = "native_fallback_used"
+        error = (
+            f"non-native tool usage detected: command_execution_count={command_execution_count} "
+            f"non_native_tool_calls={non_native_tool_calls} "
+            f"non_computer_use_mcp_calls={non_computer_use_mcp_calls}"
+        )
+    elif list_apps_completed < 2:
+        failure_class = "native_list_apps_repeat_failed"
+        error = f"list_apps completed {list_apps_completed} times"
+    elif get_app_state_completed < 2:
+        failure_class = "native_get_app_state_failed"
+        error = f"get_app_state completed {get_app_state_completed} times"
+    elif click_completed < 2 or not safari_click_received:
+        failure_class = "native_click_failed"
+        error = f"click_completed={click_completed} safari_click_received={safari_click_received}"
+    elif not (type_text_completed and safari_input_verified and cleanup_keypress_ok and success_marker):
+        failure_class = "native_interaction_failed"
+        error = (
+            f"type_text={type_text_completed} press_key_completed={press_key_completed} "
+            f"press_key_attempted={press_key_attempted} cleanup_keypress_ok={cleanup_keypress_ok} "
+            f"success_marker={success_marker} safari_type_received={safari_type_received} "
+            f"token_visible_in_safari={token_visible_in_safari}"
+        )
+    if setup_error and not error:
+        error = setup_error
+
+    payload = {
+        "recorded_at": int(time.time()),
+        "started_at": started_at,
+        "source": "codex_app_mcp_tool",
+        "runner": "codex-computer-use-guard run-native-smoke",
+        "verified_by_guard_runner": True,
+        "fallback_used": fallback_used,
+        "codex_exec": str(OPENAI_CODEX_EXEC),
+        "codex_exec_exit_code": returncode,
+        "codex_exec_timed_out": timed_out,
+        "structured_events_found": structured_events_found,
+        "unstructured_stdout_lines": unstructured_stdout_lines,
+        "command_execution_count": command_execution_count,
+        "tool_discovery_events": tool_discovery_events,
+        "non_native_tool_calls": non_native_tool_calls,
+        "non_computer_use_mcp_calls": non_computer_use_mcp_calls,
+        "list_apps_completed": list_apps_completed,
+        "get_app_state_completed": get_app_state_completed,
+        "click_completed": click_completed,
+        "safari_click_received": safari_click_received,
+        "safari_type_received": safari_type_received,
+        "safari_smoke_url": click_url,
+        "type_text_completed": type_text_completed,
+        "press_key_completed": press_key_completed,
+        "press_key_attempted": press_key_attempted,
+        "safari_close_completed": safari_close_completed,
+        "safari_close_no_windows": safari_close_no_windows,
+        "safari_close_ok": safari_close_ok,
+        "cleanup_keypress_ok": cleanup_keypress_ok,
+        "success_marker": success_marker,
+        "interaction_token": token,
+        "token_visible_in_safari": token_visible_in_safari,
+        "safari_input_verified": safari_input_verified,
+        "smoke_cleanup": smoke_cleanup,
+        "list_apps_ok": list_apps_completed >= 1,
+        "list_apps_repeat_ok": list_apps_completed >= 2,
+        "get_app_state_ok": get_app_state_completed >= 2,
+        "interaction_ok": (
+            click_completed >= 2
+            and safari_click_received
+            and safari_input_verified
+            and type_text_completed
+            and cleanup_keypress_ok
+            and success_marker
+        ),
+        "second_mouse_verified": click_completed >= 2 and safari_click_received and safari_input_verified,
+        "failure_class": failure_class,
+        "error": error,
+        "stdout_tail": _compact_stdout_tail(stdout),
+        "stderr_tail": _compact_stdout_tail(stderr, lines=40),
+    }
+    status = _native_smoke_status(payload)
+    _write_native_smoke(status)
+    cleanup_stale_mcp_clients(kill_duplicates=False)
+    return status
+
+
+def _bootstrap_script() -> str:
+    return f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+MAIN = Path({str(MAIN_GUARD)!r})
+BACKUP = Path({str(GUARD_BACKUP)!r})
+LOG = Path({str(CODEX_HOME / "logs" / "computer-use-guard.bootstrap.log.jsonl")!r})
+
+
+def log(level: str, message: str, **fields: object) -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        payload = {{"ts": int(time.time()), "level": level, "message": message}}
+        if fields:
+            payload["fields"] = fields
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+    except Exception:
+        pass
+
+
+def restore_if_needed() -> None:
+    needs_restore = (not MAIN.is_file()) or (MAIN.is_file() and MAIN.stat().st_size < 1000)
+    if needs_restore and BACKUP.is_file():
+        MAIN.parent.mkdir(parents=True, exist_ok=True)
+        tmp = MAIN.with_name(MAIN.name + f".restore-{{os.getpid()}}")
+        shutil.copy2(BACKUP, tmp)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, MAIN)
+        log("info", "restored computer-use guard from bootstrap backup", main=str(MAIN), backup=str(BACKUP))
+    if MAIN.is_file() and not os.access(MAIN, os.X_OK):
+        os.chmod(MAIN, 0o755)
+        log("info", "restored computer-use guard executable bit", main=str(MAIN))
+
+
+restore_if_needed()
+if not MAIN.is_file():
+    log("error", "computer-use guard missing and bootstrap backup unavailable", main=str(MAIN), backup=str(BACKUP))
+    raise SystemExit(127)
+
+os.execv(str(MAIN), [str(MAIN), *sys.argv[1:]])
+"""
+
+
+def _write_bootstrap_assets() -> bool:
+    changed = False
+    (CODEX_HOME / "logs").mkdir(parents=True, exist_ok=True)
+    BOOTSTRAP_DIR.mkdir(parents=True, exist_ok=True)
+    source = _self_path()
+    if source.is_file():
+        try:
+            if not GUARD_BACKUP.exists() or source.read_bytes() != GUARD_BACKUP.read_bytes():
+                tmp = GUARD_BACKUP.with_name(GUARD_BACKUP.name + f".tmp-{os.getpid()}")
+                shutil.copy2(source, tmp)
+                os.chmod(tmp, 0o755)
+                os.replace(tmp, GUARD_BACKUP)
+                changed = True
+        except Exception:
+            pass
+    bootstrap = _bootstrap_script()
+    current = BOOTSTRAP.read_text(encoding="utf-8") if BOOTSTRAP.exists() else ""
+    if current != bootstrap:
+        tmp = BOOTSTRAP.with_name(BOOTSTRAP.name + f".tmp-{os.getpid()}")
+        tmp.write_text(bootstrap, encoding="utf-8")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, BOOTSTRAP)
+        changed = True
+    elif not os.access(BOOTSTRAP, os.X_OK):
+        os.chmod(BOOTSTRAP, 0o755)
+        changed = True
+    return changed
+
+
+def _launch_agent_payload() -> dict[str, Any]:
+    return {
+        "Label": LAUNCH_AGENT_LABEL,
+        "ProgramArguments": [str(BOOTSTRAP), "ensure-config", "--quiet"],
+        "RunAtLoad": True,
+        "StartInterval": LAUNCH_AGENT_START_INTERVAL_SECONDS,
+        "StandardErrorPath": str(CODEX_HOME / "logs" / "computer-use-guard.launchd.err.log"),
+        "StandardOutPath": str(CODEX_HOME / "logs" / "computer-use-guard.launchd.out.log"),
+        "WatchPaths": [
+            str(CONFIG),
+            str(CODEX_HOME),
+            str(BUNDLED_MARKETPLACE),
+            str(PATCHED_BUNDLED_MARKETPLACE),
+            str(CODEX_HOME / "plugins" / "cache" / "openai-bundled"),
+        ],
+    }
+
+
+def _write_launch_agent() -> bool:
+    desired = _launch_agent_payload()
+    current: dict[str, Any] | None = None
+    if LAUNCH_AGENT.exists():
+        try:
+            with LAUNCH_AGENT.open("rb") as fh:
+                current = plistlib.load(fh)
+        except Exception:
+            current = None
+    if current == desired:
+        return False
+    LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
+    tmp = LAUNCH_AGENT.with_name(LAUNCH_AGENT.name + f".tmp-{os.getpid()}")
+    with tmp.open("wb") as fh:
+        plistlib.dump(desired, fh, sort_keys=True)
+    os.replace(tmp, LAUNCH_AGENT)
+    return True
+
+
+def _launch_agent_config_ok() -> bool:
+    if not LAUNCH_AGENT.is_file():
+        return False
+    try:
+        with LAUNCH_AGENT.open("rb") as fh:
+            current = plistlib.load(fh)
+    except Exception:
+        return False
+    return current == _launch_agent_payload()
+
+
+def _launch_agent_loaded() -> bool:
+    try:
+        result = _run_capture(
+            ["/bin/launchctl", "print", f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"],
+            timeout=2,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _launch_agent_loaded_for(label: str) -> bool:
+    try:
+        result = _run_capture(["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"], timeout=2)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _legacy_launch_agent_labels() -> list[str]:
+    return sorted(set(LEGACY_LAUNCH_AGENT_LABELS))
+
+
+def _cleanup_legacy_launch_agents() -> bool:
+    changed = False
+    for label in _legacy_launch_agent_labels():
+        if _launch_agent_loaded_for(label):
+            try:
+                subprocess.run(
+                    ["/bin/launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=2,
+                )
+                changed = True
+            except Exception:
+                pass
+        path = HOME / "Library" / "LaunchAgents" / f"{label}.plist"
+        if path.exists():
+            try:
+                path.unlink()
+                changed = True
+            except Exception as exc:  # noqa: BLE001
+                _log("error", "failed to remove legacy computer-use guard LaunchAgent", label=label, error=str(exc))
+    return changed
+
+
+def ensure_launch_agent() -> tuple[bool, bool]:
+    bootstrap_changed = _write_bootstrap_assets()
+    plist_changed = _write_launch_agent()
+    loaded = _launch_agent_loaded()
+    if loaded and not plist_changed:
+        legacy_changed = _cleanup_legacy_launch_agents()
+        return bootstrap_changed or legacy_changed, True
+    if loaded and plist_changed:
+        try:
+            subprocess.run(
+                ["/bin/launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2,
+            )
+        except Exception:
+            pass
+        loaded = False
+    if not loaded:
+        try:
+            result = subprocess.run(
+                ["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(LAUNCH_AGENT)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2,
+            )
+            loaded = result.returncode == 0 or _launch_agent_loaded()
+        except Exception:
+            loaded = _launch_agent_loaded()
+    legacy_changed = _cleanup_legacy_launch_agents() if loaded else False
+    return bootstrap_changed or plist_changed or legacy_changed, loaded
+
+
+def _dialog_autopilot(command: str) -> dict[str, Any]:
+    if not DIALOG_AUTOPILOT.is_file():
+        return {"ok": False, "missing": True, "path": str(DIALOG_AUTOPILOT)}
+    try:
+        result = _run_capture([str(DIALOG_AUTOPILOT), command, "--json"], timeout=8)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "path": str(DIALOG_AUTOPILOT)}
+    try:
+        payload = json.loads(result.stdout)
+    except Exception:
+        payload = {"ok": False, "error": result.stdout[-800:], "path": str(DIALOG_AUTOPILOT)}
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "error": "non-object dialog autopilot response", "path": str(DIALOG_AUTOPILOT)}
+    payload.setdefault("path", str(DIALOG_AUTOPILOT))
+    payload.setdefault("returncode", result.returncode)
+    return payload
+
+
+def ensure_dialog_autopilot() -> dict[str, Any]:
+    return _dialog_autopilot("install")
+
+
+def dialog_autopilot_status() -> dict[str, Any]:
+    return _dialog_autopilot("status")
+
+
+def _load_plugin_manifest(source: Path) -> dict[str, Any]:
+    path = source / ".codex-plugin" / "plugin.json"
+    with path.open("r", encoding="utf-8-sig") as fh:
+        payload = json.load(fh)
+    if payload.get("name") != "computer-use":
+        raise RuntimeError(f"unexpected plugin name in {path}")
+    version = str(payload.get("version") or "").strip()
+    if not version:
+        raise RuntimeError(f"missing computer-use plugin version in {path}")
+    if payload.get("mcpServers") != "./.mcp.json":
+        raise RuntimeError(f"unexpected computer-use mcpServers in {path}")
+    return payload
+
+
+def _marketplace_plugin_names(marketplace: Path) -> set[str]:
+    path = marketplace / ".agents" / "plugins" / "marketplace.json"
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return set()
+    plugins = payload.get("plugins") if isinstance(payload, dict) else payload
+    if not isinstance(plugins, list):
+        return set()
+    names: set[str] = set()
+    for item in plugins:
+        if isinstance(item, str):
+            name = item
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("id") or item.get("pluginId") or "")
+        else:
+            name = ""
+        if name:
+            names.add(name)
+    return names
+
+
+def _plugin_local_mcp_wrapper_path(plugin_root: Path) -> Path:
+    return plugin_root / PLUGIN_MCP_WRAPPER
+
+
+def _plugin_local_mcp_wrapper_text() -> str:
+    return (
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'exec "$HOME/.codex/bin/codex-computer-use-native-launcher" "$@"\n'
+    )
+
+
+def _native_launcher_text() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${CODEX_CU_LAUNCHER_SKIP_GUARD:-}" != "1" ]]; then
+  "$HOME/.codex/bin/codex-computer-use-guard" ensure-config --quiet >/dev/null 2>&1 || true
+fi
+
+codex_app="${CODEX_CU_CODEX_APP:-/Applications/Codex.app}"
+native_candidates=(
+  "$HOME/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/"Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+  "$codex_app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
+)
+
+for native_binary in "${native_candidates[@]}"; do
+  if [[ -x "$native_binary" ]]; then
+    exec "$native_binary" "$@"
+  fi
+done
+
+echo "no executable native Computer Use client found" >&2
+exit 127
+"""
+
+
+def _notify_wrapper_text() -> str:
+    return f"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+CODEX_HOME = HOME / ".codex"
+LOG = CODEX_HOME / "logs" / "computer-use-notify.log.jsonl"
+CODEX_APP = Path(os.environ.get("CODEX_CU_CODEX_APP", "/Applications/Codex.app")).expanduser()
+NATIVE_BINARY_CANDIDATES = [
+    CODEX_HOME / "plugins" / "marketplaces" / "openai-bundled" / "plugins" / "computer-use" / "Codex Computer Use.app" / "Contents" / "SharedSupport" / "SkyComputerUseClient.app" / "Contents" / "MacOS" / "SkyComputerUseClient",
+    CODEX_APP / "Contents" / "Resources" / "plugins" / "openai-bundled" / "plugins" / "computer-use" / "Codex Computer Use.app" / "Contents" / "SharedSupport" / "SkyComputerUseClient.app" / "Contents" / "MacOS" / "SkyComputerUseClient",
+    CODEX_HOME / "computer-use" / "Codex Computer Use.app" / "Contents" / "SharedSupport" / "SkyComputerUseClient.app" / "Contents" / "MacOS" / "SkyComputerUseClient",
+]
+TIMEOUT_SECONDS = float(os.environ.get("CODEX_CU_NOTIFY_TIMEOUT", "4"))
+
+
+def log(level: str, message: str, **fields: object) -> None:
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        payload = {{"ts": int(time.time()), "level": level, "message": message}}
+        if fields:
+            payload["fields"] = fields
+        with LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=True) + "\\n")
+    except Exception:
+        pass
+
+
+def cleanup_native_turn_ended() -> list[int]:
+    killed: list[int] = []
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-axo", "pid=,command="],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except Exception:
+        return killed
+    needles = [str(path) + " turn-ended" for path in NATIVE_BINARY_CANDIDATES]
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line or not any(needle in line for needle in needles):
+            continue
+        pid_text, _, _command = line.partition(" ")
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except Exception:
+            pass
+    return killed
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in {{"--help", "-h", "help"}}:
+        print("USAGE: codex-computer-use-notify turn-ended [payload]")
+        return 0
+    native_binary = next((path for path in NATIVE_BINARY_CANDIDATES if path.is_file() and os.access(path, os.X_OK)), None)
+    if native_binary is None:
+        log("info", "native notify binary missing; ignoring", candidates=[str(path) for path in NATIVE_BINARY_CANDIDATES], argv=sys.argv[1:])
+        cleanup_native_turn_ended()
+        return 0
+    proc = subprocess.Popen(
+        [str(native_binary), *sys.argv[1:]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        proc.wait(timeout=TIMEOUT_SECONDS)
+        if proc.returncode not in (0, None):
+            log("info", "native notify exited non-zero", returncode=proc.returncode, argv=sys.argv[1:])
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        log("info", "native notify timed out and was killed", timeout=TIMEOUT_SECONDS, argv=sys.argv[1:])
+    killed = cleanup_native_turn_ended()
+    if killed:
+        log("info", "cleaned native notify stragglers", killed=killed, argv=sys.argv[1:])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
+
+def _mcp_command_path() -> Path:
+    return COMPUTER_USE_NATIVE_LAUNCHER if COMPUTER_USE_NATIVE_LAUNCHER.is_file() else _runtime_binary_path()
+
+
+def ensure_broker_backup() -> bool:
+    """Keep the diagnostic native-only broker restorable across accidental deletion."""
+    changed = False
+    BOOTSTRAP_DIR.mkdir(parents=True, exist_ok=True)
+    if COMPUTER_USE_BROKER.is_file():
+        if not BROKER_BACKUP.exists() or COMPUTER_USE_BROKER.read_bytes() != BROKER_BACKUP.read_bytes():
+            tmp = BROKER_BACKUP.with_name(BROKER_BACKUP.name + f".tmp-{os.getpid()}")
+            shutil.copy2(COMPUTER_USE_BROKER, tmp)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, BROKER_BACKUP)
+            changed = True
+        if not os.access(COMPUTER_USE_BROKER, os.X_OK):
+            os.chmod(COMPUTER_USE_BROKER, 0o755)
+            changed = True
+        return changed
+    if BROKER_BACKUP.is_file():
+        COMPUTER_USE_BROKER.parent.mkdir(parents=True, exist_ok=True)
+        tmp = COMPUTER_USE_BROKER.with_name(COMPUTER_USE_BROKER.name + f".tmp-{os.getpid()}")
+        shutil.copy2(BROKER_BACKUP, tmp)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, COMPUTER_USE_BROKER)
+        return True
+    return changed
+
+
+def ensure_native_launcher() -> bool:
+    """Keep the MCP entrypoint as an exec-preserving native launcher."""
+    return _ensure_text_file(COMPUTER_USE_NATIVE_LAUNCHER, _native_launcher_text(), executable=True)
+
+
+def _native_launcher_ok() -> bool:
+    return (
+        COMPUTER_USE_NATIVE_LAUNCHER.is_file()
+        and os.access(COMPUTER_USE_NATIVE_LAUNCHER, os.X_OK)
+        and COMPUTER_USE_NATIVE_LAUNCHER.read_text(encoding="utf-8") == _native_launcher_text()
+    )
+
+
+def ensure_notify_wrapper() -> bool:
+    """Keep Codex turn-ended notifications from leaving native helper processes behind."""
+    return _ensure_text_file(COMPUTER_USE_NOTIFY, _notify_wrapper_text(), executable=True)
+
+
+def _notify_wrapper_ok() -> bool:
+    return (
+        COMPUTER_USE_NOTIFY.is_file()
+        and os.access(COMPUTER_USE_NOTIFY, os.X_OK)
+        and COMPUTER_USE_NOTIFY.read_text(encoding="utf-8") == _notify_wrapper_text()
+    )
+
+
+def ensure_plugin_local_mcp_wrapper(plugin_root: Path) -> bool:
+    """Keep marketplace plugin loading away from the unpatched bundled binary."""
+    changed = False
+    wrapper = _plugin_local_mcp_wrapper_path(plugin_root)
+    desired_wrapper = _plugin_local_mcp_wrapper_text()
+    current_wrapper = wrapper.read_text(encoding="utf-8") if wrapper.exists() else ""
+    if current_wrapper != desired_wrapper:
+        tmp = wrapper.with_name(wrapper.name + f".tmp-{os.getpid()}")
+        tmp.write_text(desired_wrapper, encoding="utf-8")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, wrapper)
+        changed = True
+    elif not os.access(wrapper, os.X_OK):
+        os.chmod(wrapper, 0o755)
+        changed = True
+
+    mcp_path = plugin_root / ".mcp.json"
+    desired_server = {
+        "command": f"./{PLUGIN_MCP_WRAPPER}",
+        "args": ["mcp"],
+        "cwd": ".",
+    }
+    desired = {"mcpServers": {"computer-use": desired_server}}
+    try:
+        current = json.loads(mcp_path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        current = None
+    if current != desired:
+        tmp = mcp_path.with_name(mcp_path.name + f".tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(desired, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, mcp_path)
+        changed = True
+    return changed
+
+
+def _plugin_local_mcp_wrapper_ok(plugin_root: Path) -> bool:
+    wrapper = _plugin_local_mcp_wrapper_path(plugin_root)
+    if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
+        return False
+    try:
+        if wrapper.read_text(encoding="utf-8") != _plugin_local_mcp_wrapper_text():
+            return False
+        payload = json.loads((plugin_root / ".mcp.json").read_text(encoding="utf-8-sig"))
+    except Exception:
+        return False
+    server = ((payload.get("mcpServers") or {}).get("computer-use") or {})
+    return server == {
+        "command": f"./{PLUGIN_MCP_WRAPPER}",
+        "args": ["mcp"],
+        "cwd": ".",
+    }
+
+
+def _plugin_local_mcp_wrapper_runtime_probe(plugin_root: Path) -> tuple[bool, str]:
+    wrapper = _plugin_local_mcp_wrapper_path(plugin_root)
+    if not wrapper.is_file():
+        return False, f"missing plugin wrapper: {wrapper}"
+    try:
+        result = _run_capture([str(wrapper), "--help"], timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+    if result.returncode == 0:
+        return True, ""
+    tail = "\n".join(result.stdout.rstrip().splitlines()[-6:])
+    return False, tail or f"plugin wrapper exited with {result.returncode}"
+
+
+def _bundled_marketplace_copy_ok(marketplace: Path) -> bool:
+    names = _marketplace_plugin_names(marketplace)
+    plugin = marketplace / "plugins" / "computer-use"
+    return (
+        "computer-use" in names
+        and (plugin / ".codex-plugin" / "plugin.json").is_file()
+        and (plugin / ".mcp.json").is_file()
+        and _plugin_local_mcp_wrapper_ok(plugin)
+        and _plugin_skill_suppressed_ok(plugin)
+    )
+
+
+def _bundled_marketplace_version_ok(marketplace: Path, expected_version: str) -> bool:
+    path = marketplace / "plugins" / "computer-use" / ".codex-plugin" / "plugin.json"
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    return payload.get("name") == "computer-use" and str(payload.get("version") or "") == expected_version
+
+
+def _computer_use_manifest_without_skills(source_manifest: Path) -> str | None:
+    try:
+        with source_manifest.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    payload.pop("skills", None)
+    return json.dumps(payload, indent=2, sort_keys=False) + "\n"
+
+
+def _mirror_bundled_marketplace(source: Path, dest: Path, *, patch_computer_use: bool) -> bool:
+    """Mirror a bundled marketplace and optionally patch its Computer Use MCP entry."""
+    source_manifest = source / ".agents" / "plugins" / "marketplace.json"
+    if not source_manifest.is_file():
+        return False
+    changed = False
+    dest_manifest = dest / ".agents" / "plugins" / "marketplace.json"
+    dest_manifest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest_manifest.exists() or source_manifest.read_bytes() != dest_manifest.read_bytes():
+        tmp = dest_manifest.with_name(dest_manifest.name + f".tmp-{os.getpid()}")
+        shutil.copy2(source_manifest, tmp)
+        os.replace(tmp, dest_manifest)
+        changed = True
+    for plugin_name in sorted(_marketplace_plugin_names(source)):
+        source_plugin = source / "plugins" / plugin_name
+        dest_plugin = dest / "plugins" / plugin_name
+        if not source_plugin.is_dir():
+            continue
+        source_plugin_manifest = source_plugin / ".codex-plugin" / "plugin.json"
+        dest_plugin_manifest = dest_plugin / ".codex-plugin" / "plugin.json"
+        if plugin_name == "computer-use":
+            desired_manifest = _computer_use_manifest_without_skills(source_plugin_manifest)
+            manifest_needs_copy = (
+                not dest_plugin_manifest.is_file()
+                or desired_manifest is None
+                or dest_plugin_manifest.read_text(encoding="utf-8", errors="replace") != desired_manifest
+            )
+        else:
+            manifest_needs_copy = (
+                not dest_plugin_manifest.is_file()
+                or (
+                    source_plugin_manifest.is_file()
+                    and source_plugin_manifest.read_bytes() != dest_plugin_manifest.read_bytes()
+                )
+            )
+        if manifest_needs_copy:
+            tmp = dest_plugin.with_name(dest_plugin.name + f".tmp-{os.getpid()}")
+            if tmp.exists():
+                shutil.rmtree(tmp)
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["/usr/bin/ditto", str(source_plugin), str(tmp)], check=True)
+            if dest_plugin.exists():
+                shutil.rmtree(dest_plugin)
+            tmp.rename(dest_plugin)
+            changed = True
+        if plugin_name == "computer-use" and dest_plugin.is_dir():
+            if patch_computer_use:
+                changed = ensure_plugin_local_mcp_wrapper(dest_plugin) or changed
+            changed = ensure_plugin_skill_suppressed(dest_plugin) or changed
+    return changed
+
+
+def _patched_bundled_marketplace_ok() -> bool:
+    return _bundled_marketplace_copy_ok(PATCHED_BUNDLED_MARKETPLACE)
+
+
+def _tmp_bundled_marketplace_ok() -> bool:
+    return _bundled_marketplace_copy_ok(TMP_BUNDLED_MARKETPLACE)
+
+
+def ensure_patched_bundled_marketplace() -> bool:
+    """Repair the stable local marketplace Codex should use for plugin loading."""
+    return _mirror_bundled_marketplace(BUNDLED_MARKETPLACE, PATCHED_BUNDLED_MARKETPLACE, patch_computer_use=True)
+
+
+def ensure_tmp_bundled_marketplace() -> bool:
+    """Repair Codex's local bundled-marketplace copy used during app startup."""
+    source = PATCHED_BUNDLED_MARKETPLACE if PATCHED_BUNDLED_MARKETPLACE.is_dir() else BUNDLED_MARKETPLACE
+    return _mirror_bundled_marketplace(source, TMP_BUNDLED_MARKETPLACE, patch_computer_use=True)
+
+
+def _binary_path(plugin_root: Path) -> Path:
+    return (
+        plugin_root
+        / "Codex Computer Use.app"
+        / "Contents"
+        / "SharedSupport"
+        / "SkyComputerUseClient.app"
+        / "Contents"
+        / "MacOS"
+        / "SkyComputerUseClient"
+    )
+
+
+def _client_app_path(plugin_root: Path) -> Path:
+    return (
+        plugin_root
+        / "Codex Computer Use.app"
+        / "Contents"
+        / "SharedSupport"
+        / "SkyComputerUseClient.app"
+    )
+
+
+def _service_app_path(plugin_root: Path) -> Path:
+    return plugin_root / "Codex Computer Use.app"
+
+
+def _service_binary_path(plugin_root: Path) -> Path:
+    return _service_app_path(plugin_root) / "Contents" / "MacOS" / "SkyComputerUseService"
+
+
+def _source_service_app_path() -> Path:
+    return COMPUTER_USE_SOURCE / "Codex Computer Use.app"
+
+
+def _source_binary_path() -> Path:
+    return _binary_path(COMPUTER_USE_SOURCE)
+
+
+def _source_service_binary_path() -> Path:
+    return _service_binary_path(COMPUTER_USE_SOURCE)
+
+
+def _signed_marketplace_binary_path() -> Path:
+    return _binary_path(PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use")
+
+
+def _signed_marketplace_service_binary_path() -> Path:
+    return SIGNED_MARKETPLACE_APP / "Contents" / "MacOS" / "SkyComputerUseService"
+
+
+def _preferred_native_binary_path(cache_root: Path) -> Path:
+    for candidate in (_signed_marketplace_binary_path(), _source_binary_path(), _runtime_binary_path(), _binary_path(cache_root)):
+        if candidate.is_file():
+            return candidate
+    return _runtime_binary_path()
+
+
+def _preferred_service_binary_path(cache_root: Path) -> Path:
+    for candidate in (
+        _signed_marketplace_service_binary_path(),
+        _source_service_binary_path(),
+        _runtime_service_binary_path(),
+        _service_binary_path(cache_root),
+    ):
+        if candidate.is_file():
+            return candidate
+    return _runtime_service_binary_path()
+
+
+def _runtime_client_app_path() -> Path:
+    return RUNTIME_APP / "Contents" / "SharedSupport" / "SkyComputerUseClient.app"
+
+
+def _runtime_service_app_path() -> Path:
+    return RUNTIME_APP
+
+
+def _runtime_binary_path() -> Path:
+    return _runtime_client_app_path() / "Contents" / "MacOS" / "SkyComputerUseClient"
+
+
+def _runtime_service_binary_path() -> Path:
+    return RUNTIME_APP / "Contents" / "MacOS" / "SkyComputerUseService"
+
+
+def _processes_matching(needle: str) -> list[tuple[int, int, str]]:
+    try:
+        result = _run_capture(["/bin/ps", "-axo", "pid=,ppid=,command="], timeout=2)
+    except Exception:
+        return []
+    matches: list[tuple[int, int, str]] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped or needle not in stripped:
+            continue
+        parts = stripped.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        command = parts[2]
+        matches.append((pid, ppid, command))
+    return matches
+
+
+def _kill_pid(pid: int) -> bool:
+    if pid == os.getpid():
+        return False
+    def alive() -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        return False
+    for _ in range(10):
+        if not alive():
+            return True
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+    for _ in range(10):
+        if not alive():
+            return True
+        time.sleep(0.1)
+    return not alive()
+
+
+def cleanup_stale_mcp_clients(*, kill_duplicates: bool = False) -> dict[str, Any]:
+    """Keep stale native MCP clients from poisoning later Codex tool sessions.
+
+    Codex can leave old SkyComputerUseClient MCP servers behind after a tool
+    timeout or thread interruption. Multiple resident MCP clients under one
+    Codex app-server parent can also be legitimate when several Codex threads
+    are open, so this function only removes orphaned clients by default. Forced
+    duplicate killing is reserved for explicit diagnostics because it can close
+    the active MCP transport of a running thread.
+    """
+    matches = [
+        (pid, ppid, command)
+        for pid, ppid, command in _processes_matching("SkyComputerUseClient")
+        if command.endswith("SkyComputerUseClient mcp") or "SkyComputerUseClient mcp" in command
+    ]
+    killed: list[int] = []
+    def parent_alive(ppid: int) -> bool:
+        try:
+            os.kill(ppid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    for pid, ppid, _command in matches:
+        if ppid in {0, 1} or (ppid and not parent_alive(ppid)):
+            if _kill_pid(pid):
+                killed.append(pid)
+    skipped_young: list[int] = []
+    if kill_duplicates and len(matches) > 1:
+        by_parent: dict[int, list[tuple[int, str]]] = {}
+        for pid, ppid, command in matches:
+            by_parent.setdefault(ppid, []).append((pid, command))
+        for _ppid, group in by_parent.items():
+            if len(group) <= 1:
+                continue
+            ages = {pid: _process_age_seconds(pid) for pid, _command in group}
+            known_ages = {pid: age for pid, age in ages.items() if age is not None}
+            newest_pid = min(known_ages, key=known_ages.get) if known_ages else max(pid for pid, _command in group)
+            for pid, _command in group:
+                if pid == newest_pid:
+                    continue
+                age = ages.get(pid)
+                if age is not None and age < DUPLICATE_MCP_GRACE_SECONDS:
+                    skipped_young.append(pid)
+                    continue
+                if _kill_pid(pid):
+                    killed.append(pid)
+    return {
+        "running": len(matches),
+        "killed": killed,
+        "skipped_young": skipped_young,
+        "duplicate_grace_seconds": DUPLICATE_MCP_GRACE_SECONDS,
+    }
+
+
+def mcp_client_processes() -> list[dict[str, Any]]:
+    """Return compact process evidence for native MCP clients."""
+    processes: list[dict[str, Any]] = []
+    for pid, ppid, command in _processes_matching("SkyComputerUseClient"):
+        if not (command.endswith("SkyComputerUseClient mcp") or "SkyComputerUseClient mcp" in command):
+            continue
+        processes.append(
+            {
+                "pid": pid,
+                "ppid": ppid,
+                "age_seconds": _process_age_seconds(pid),
+                "command": command,
+            }
+        )
+    processes.sort(key=lambda item: int(item.get("pid") or 0))
+    return processes
+
+
+def mcp_client_ownership_status() -> dict[str, Any]:
+    """Return diagnostic native MCP client process ownership evidence."""
+    processes = mcp_client_processes()
+    by_parent: dict[str, list[int]] = {}
+    for process in processes:
+        by_parent.setdefault(str(process["ppid"]), []).append(int(process["pid"]))
+    duplicate_parents = {ppid: pids for ppid, pids in by_parent.items() if len(pids) > 1}
+    return {
+        "ok": not duplicate_parents,
+        "running": len(processes),
+        "processes": processes,
+        "duplicate_parents": duplicate_parents,
+        "expected": "ok=true requires no duplicate native MCP clients under one Codex app-server parent; full ensure cleans old duplicate clients before and after native smoke refresh after a short grace window",
+    }
+
+
+def _process_age_seconds(pid: int) -> int | None:
+    try:
+        result = _run_capture(["/bin/ps", "-p", str(pid), "-o", "etime="], timeout=2)
+    except Exception:
+        return None
+    text = result.stdout.strip()
+    if not text:
+        return None
+    days = 0
+    if "-" in text:
+        day_text, text = text.split("-", 1)
+        try:
+            days = int(day_text)
+        except ValueError:
+            return None
+    parts = text.split(":")
+    try:
+        if len(parts) == 3:
+            hours, minutes, seconds = (int(part) for part in parts)
+        elif len(parts) == 2:
+            hours = 0
+            minutes, seconds = (int(part) for part in parts)
+        else:
+            return None
+    except ValueError:
+        return None
+    return (days * 24 * 60 * 60) + (hours * 60 * 60) + (minutes * 60) + seconds
+
+
+def cleanup_stale_notify_clients(*, kill_stale: bool = True, max_age_seconds: int = 30) -> dict[str, Any]:
+    """Remove stuck `turn-ended` native notification helpers.
+
+    Codex invokes the configured `notify` command after turns. Direct native
+    `SkyComputerUseClient turn-ended ...` calls have been observed to daemonize
+    under launchd and stay alive for minutes. They are not MCP servers, but they
+    still share the Computer Use runtime and should not accumulate across
+    restarts or fresh threads.
+    """
+    matches = [
+        (pid, ppid, command)
+        for pid, ppid, command in _processes_matching("SkyComputerUseClient")
+        if command.startswith(str(_runtime_binary_path())) and " turn-ended" in command
+    ]
+    killed: list[int] = []
+    details: list[dict[str, Any]] = []
+    for pid, ppid, command in matches:
+        age = _process_age_seconds(pid)
+        stale = ppid == 1 or (age is not None and age >= max_age_seconds)
+        details.append({"pid": pid, "ppid": ppid, "age_seconds": age, "stale": stale})
+        if kill_stale and stale and _kill_pid(pid):
+            killed.append(pid)
+    return {"running": len(matches), "killed": killed, "processes": details}
+
+
+def _cleanup_service_probe_processes(binary: Path) -> None:
+    """Remove service --help probe processes that can daemonize past timeout."""
+    exact_command = f"{binary} --help"
+    for pid, _ppid, command in _processes_matching(str(binary)):
+        if command != exact_command:
+            continue
+        _kill_pid(pid)
+
+
+def _run_capture(cmd: list[str], *, timeout: int = 10) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+
+
+def _runtime_probe(binary: Path) -> tuple[bool, str]:
+    if not os.access(binary, os.X_OK):
+        return False, f"native binary is not executable: {binary}"
+    result = _run_capture([str(binary), "--help"], timeout=10)
+    if result.returncode == 0:
+        return True, ""
+    return False, "\n".join(result.stdout.rstrip().splitlines()[-8:])
+
+
+def _service_runtime_probe(binary: Path) -> tuple[bool, str]:
+    if not os.access(binary, os.X_OK):
+        return False, f"native service is not executable: {binary}"
+    try:
+        result = _run_capture([str(binary), "--help"], timeout=2)
+    except subprocess.TimeoutExpired:
+        _cleanup_service_probe_processes(binary)
+        return True, ""
+    finally:
+        _cleanup_service_probe_processes(binary)
+    if result.returncode == 0:
+        return True, ""
+    error = "\n".join(result.stdout.rstrip().splitlines()[-8:])
+    if MISSING_PRIORITY_ESCALATION_SYMBOL in error:
+        return False, error
+    # The GUI service can stay resident or exit non-zero for non-service probes.
+    # Once dyld succeeds, that is enough for the runtime compatibility check.
+    return True, error
+
+
+def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str]:
+    if not os.access(binary, os.X_OK):
+        return False, [], f"native MCP binary is not executable: {binary}"
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "codex-computer-use-guard", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    ]
+    request = "\n".join(json.dumps(message, separators=(",", ":")) for message in messages) + "\n"
+    try:
+        result = subprocess.run(
+            [str(binary), "mcp"],
+            input=request,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, [], str(exc)
+
+    tools: list[str] = []
+    errors: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(line[-300:])
+            continue
+        if response.get("id") != 2:
+            continue
+        if response.get("error"):
+            errors.append(json.dumps(response["error"], ensure_ascii=True))
+            continue
+        result_payload = response.get("result") or {}
+        for tool in result_payload.get("tools", []):
+            if isinstance(tool, dict) and tool.get("name"):
+                tools.append(str(tool["name"]))
+
+    required = {"list_apps", "get_app_state", "click", "type_text", "press_key"}
+    missing = sorted(required.difference(tools))
+    if result.returncode != 0 and not tools:
+        errors.append(f"native MCP probe exited with {result.returncode}")
+    if missing:
+        errors.append(f"missing expected tools: {', '.join(missing)}")
+    return not errors, tools, "; ".join(errors)
+
+
+def _mcp_tool_call_probe(binary: Path, tool_name: str, arguments: dict[str, Any], *, timeout: int = 15) -> tuple[bool, int | None, str]:
+    if not os.access(binary, os.X_OK):
+        return False, None, f"native MCP binary is not executable: {binary}"
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "codex-computer-use-guard-call-probe", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        },
+    ]
+    request = "\n".join(json.dumps(message, separators=(",", ":")) for message in messages) + "\n"
+    try:
+        result = subprocess.run(
+            [str(binary), "mcp"],
+            input=request,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, None, str(exc)
+
+    errors: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if response.get("id") != 2:
+            continue
+        if response.get("error"):
+            return False, None, json.dumps(response["error"], ensure_ascii=True)
+        result_payload = response.get("result") or {}
+        if result_payload.get("isError"):
+            text = "\n".join(
+                str(item.get("text") or "")
+                for item in result_payload.get("content") or []
+                if isinstance(item, dict)
+            )
+            return False, None, text[:1000] or f"{tool_name} returned isError"
+        text = "\n".join(
+            str(item.get("text") or "")
+            for item in result_payload.get("content") or []
+            if isinstance(item, dict)
+        )
+        count: int | None = None
+        if tool_name == "list_apps":
+            payload_text = text.split("\n", 1)[1] if "\n" in text else text
+            try:
+                apps = json.loads(payload_text)
+                if isinstance(apps, list):
+                    count = len(apps)
+            except Exception:
+                count = None
+            if not count:
+                return False, count, "list_apps returned no parseable app rows"
+        return True, count, ""
+    if result.returncode != 0:
+        errors.append(f"MCP call probe exited with {result.returncode}")
+    return False, None, "; ".join(errors) or f"missing response for {tool_name}"
+
+
+def _register_launch_services(cache_root: Path) -> bool:
+    if not LSREGISTER.is_file():
+        return False
+    unregister_apps = [RUNTIME_APP]
+    unregister_apps.extend((HOME / ".Trash").glob("Codex.app.backup.*/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app"))
+    unregister_apps.extend(Path("/Applications").glob("Codex.app.backup.*/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app"))
+    for app in unregister_apps:
+        if not app.exists():
+            continue
+        _run_capture([str(LSREGISTER), "-u", str(app)], timeout=8)
+        client = app / "Contents" / "SharedSupport" / "SkyComputerUseClient.app"
+        if client.exists():
+            _run_capture([str(LSREGISTER), "-u", str(client)], timeout=8)
+
+    register_apps = [app for app in (SIGNED_MARKETPLACE_APP, _source_service_app_path()) if app.is_dir()]
+    if not register_apps:
+        register_apps = [_runtime_service_app_path() if RUNTIME_APP.is_dir() else _service_app_path(cache_root)]
+    register_paths: list[str] = []
+    for service_app in register_apps:
+        register_paths.append(str(service_app))
+        client_app = service_app / "Contents" / "SharedSupport" / "SkyComputerUseClient.app"
+        if client_app.is_dir():
+            register_paths.append(str(client_app))
+    try:
+        result = _run_capture([str(LSREGISTER), "-f", *register_paths], timeout=8)
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def _service_running(binary: Path) -> bool:
+    return any(command == str(binary) for _pid, _ppid, command in _processes_matching(str(binary)))
+
+
+def _computer_use_appdata_privacy_status() -> dict[str, Any]:
+    def marker_status(error: str = "") -> dict[str, Any]:
+        try:
+            marker = json.loads(APPDATA_PRIVACY_MARKER.read_text(encoding="utf-8"))
+        except Exception:
+            return {"ok": False, "error": error or f"missing TCC database: {USER_TCC_DB}"}
+        age_seconds = time.time() - float(marker.get("ts", 0))
+        ok = bool(marker.get("ok") and age_seconds <= 30 * 24 * 60 * 60)
+        return {
+            "ok": ok,
+            "source": "marker",
+            "age_seconds": round(age_seconds, 3),
+            "marker": str(APPDATA_PRIVACY_MARKER),
+            "error": error,
+        }
+
+    if not USER_TCC_DB.is_file():
+        return marker_status(f"missing TCC database: {USER_TCC_DB}")
+    query = (
+        "select service,auth_value,auth_reason,last_modified "
+        "from access where client='com.openai.sky.CUAService' "
+        "and client_type=0 and service in "
+        "('kTCCServiceSystemPolicyAppData','kTCCServiceSystemPolicyAppBundles') "
+        "order by service;"
+    )
+    try:
+        result = _run_capture(["/usr/bin/sqlite3", str(USER_TCC_DB), query], timeout=3)
+    except Exception as exc:  # noqa: BLE001
+        return marker_status(str(exc))
+    if result.returncode != 0:
+        return marker_status(" ".join(result.stdout.split())[:500])
+
+    entries: dict[str, dict[str, int]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) != 4:
+            continue
+        service, auth_value, auth_reason, last_modified = parts
+        try:
+            entries[service] = {
+                "auth_value": int(auth_value),
+                "auth_reason": int(auth_reason),
+                "last_modified": int(last_modified),
+            }
+        except ValueError:
+            continue
+
+    # For kTCCServiceSystemPolicyAppData on macOS 15, auth_value 5 is the
+    # persisted "allowed app data" state after the user accepts the prompt.
+    appdata = entries.get("kTCCServiceSystemPolicyAppData")
+    appbundles = entries.get("kTCCServiceSystemPolicyAppBundles")
+    appdata_ok = bool(appdata and appdata.get("auth_value") in {2, 5})
+    appbundles_ok = appbundles is None or appbundles.get("auth_value") in {2, 5}
+    payload = {
+        "ok": appdata_ok and appbundles_ok,
+        "bundle_id": COMPUTER_USE_SERVICE_BUNDLE_ID,
+        "database": str(USER_TCC_DB),
+        "entries": entries,
+    }
+    if payload["ok"]:
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            APPDATA_PRIVACY_MARKER.write_text(
+                json.dumps({"ok": True, "ts": time.time(), "bundle_id": COMPUTER_USE_SERVICE_BUNDLE_ID})
+                + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+    return payload
+
+
+def _warm_service(cache_root: Path) -> tuple[bool, str]:
+    service_app = _runtime_service_app_path() if RUNTIME_APP.is_dir() else _service_app_path(cache_root)
+    binary = _runtime_service_binary_path() if _runtime_service_binary_path().is_file() else _service_binary_path(cache_root)
+    if _service_running(binary):
+        return True, ""
+    privacy = _computer_use_appdata_privacy_status()
+    if privacy.get("ok"):
+        return True, "skipped warm start because macOS AppData approval is already persisted"
+    before = _diagnostic_crash_count("SkyComputerUseService")
+    try:
+        result = subprocess.run(
+            ["/usr/bin/open", "-gj", str(service_app)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=8,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+    for _ in range(20):
+        if _service_running(binary):
+            return True, ""
+        time.sleep(0.2)
+    after = _diagnostic_crash_count("SkyComputerUseService")
+    detail = (result.stderr or "").strip()
+    if after > before:
+        detail = (detail + " " if detail else "") + "SkyComputerUseService crashed during warm launch"
+    return False, detail or "SkyComputerUseService did not stay running after warm launch"
+
+
+def _diagnostic_crash_count(process_name: str) -> int:
+    reports = HOME / "Library" / "Logs" / "DiagnosticReports"
+    if not reports.is_dir():
+        return 0
+    try:
+        return sum(1 for _path in reports.glob(f"{process_name}-*.ips"))
+    except Exception:
+        return 0
+
+
+def _binary_uses_shim(binary: Path) -> bool:
+    result = _run_capture(["/usr/bin/otool", "-L", str(binary)], timeout=10)
+    return "@rpath/libswift_Concurrency.dylib" in result.stdout
+
+
+def _binary_uses_embedded_swift_core(binary: Path) -> bool:
+    result = _run_capture(["/usr/bin/otool", "-L", str(binary)], timeout=10)
+    return "@rpath/libswiftCore.dylib" in result.stdout
+
+
+def _priority_escalation_overlay_is_minimal(shim: Path) -> bool:
+    if not shim.is_file():
+        return False
+    symbols = _run_capture(["/usr/bin/nm", "-gU", str(shim)], timeout=10)
+    links = _run_capture(["/usr/bin/otool", "-L", str(shim)], timeout=10)
+    return (
+        MISSING_PRIORITY_ESCALATION_SYMBOL in symbols.stdout
+        and "_swift_task_removePriorityEscalationHandler" in symbols.stdout
+        and "@rpath/libswiftCore.dylib" not in links.stdout
+    )
+
+
+def _system_swift_has_priority_escalation_symbol() -> bool:
+    result = _run_capture(["/usr/bin/nm", "-gU", "/usr/lib/swift/libswift_Concurrency.dylib"], timeout=10)
+    return MISSING_PRIORITY_ESCALATION_SYMBOL in result.stdout
+
+
+def _build_priority_escalation_shim(dest: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="codex-cu-shim-") as tmp_name:
+        tmp = Path(tmp_name)
+        source = tmp / "libswift_Concurrency_shim.c"
+        dylib = tmp / "libswift_Concurrency.dylib"
+        source.write_text(PRIORITY_ESCALATION_SHIM_SOURCE + "\n", encoding="utf-8")
+        subprocess.run(
+            [
+                "/usr/bin/clang",
+                "-dynamiclib",
+                "-arch",
+                "arm64",
+                "-install_name",
+                "@rpath/libswift_Concurrency.dylib",
+                "-Wl,-reexport_library,/usr/lib/swift/libswift_Concurrency.dylib",
+                str(source),
+                "-o",
+                str(dylib),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(dylib, dest)
+
+
+def _computer_use_entitlements_file() -> Path:
+    entitlements = STATE_DIR / "computer-use-native.entitlements.plist"
+    entitlements.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>com.apple.security.application-groups</key><array><string>2DC432GLL2.com.openai.sky.CUAService</string></array><key>com.apple.security.automation.apple-events</key><true/></dict></plist>
+""",
+        encoding="utf-8",
+    )
+    return entitlements
+
+
+def _has_computer_use_entitlements(app: Path) -> bool:
+    result = _run_capture(["/usr/bin/codesign", "-d", "--entitlements", ":-", str(app)], timeout=10)
+    return (
+        "2DC432GLL2.com.openai.sky.CUAService" in result.stdout
+        and "com.apple.security.automation.apple-events" in result.stdout
+    )
+
+
+def _patch_priority_escalation_shim(app: Path, binary: Path) -> bool:
+    frameworks = app / "Contents" / "Frameworks"
+    shim = frameworks / "libswift_Concurrency.dylib"
+    backup = binary.with_name(binary.name + ".openai-signed-backup")
+    changed = False
+    if not backup.exists():
+        try:
+            shutil.copy2(binary, backup)
+        except PermissionError:
+            if not backup.exists():
+                raise
+    elif _binary_uses_embedded_swift_core(binary):
+        shutil.copy2(backup, binary)
+        changed = True
+    _build_priority_escalation_shim(shim)
+    changed = True
+    if not _binary_uses_shim(binary):
+        subprocess.run(
+            [
+                "/usr/bin/install_name_tool",
+                "-change",
+                "/usr/lib/swift/libswift_Concurrency.dylib",
+                "@rpath/libswift_Concurrency.dylib",
+                str(binary),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        subprocess.run(
+            ["/usr/bin/install_name_tool", "-delete_rpath", "/usr/lib/swift", str(binary)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        changed = True
+    entitlements = _computer_use_entitlements_file()
+    subprocess.run(
+        ["/usr/bin/codesign", "--force", "--deep", "--sign", "-", "--entitlements", str(entitlements), str(app)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return changed
+
+
+def ensure_runtime_compat(cache_root: Path) -> tuple[bool, str]:
+    """Patch the local cached service/client for the known macOS 15 Swift gap."""
+    signed_binary = _signed_marketplace_binary_path() if _signed_marketplace_binary_path().is_file() else _source_binary_path()
+    if signed_binary.is_file():
+        signed_ok, _signed_error = _runtime_probe(signed_binary)
+        if signed_ok:
+            return False, "signed-native"
+        if os.environ.get("CODEX_CU_ALLOW_ADHOC_SWIFT_SHIM") != "1":
+            return False, "signed-native-failed-adhoc-shim-disabled"
+
+    targets = [
+        (_client_app_path(cache_root), _binary_path(cache_root), _runtime_probe),
+        (_service_app_path(cache_root), _service_binary_path(cache_root), _service_runtime_probe),
+    ]
+    if RUNTIME_APP.is_dir():
+        targets.extend(
+            [
+                (_runtime_client_app_path(), _runtime_binary_path(), _runtime_probe),
+                (_runtime_service_app_path(), _runtime_service_binary_path(), _service_runtime_probe),
+            ]
+        )
+
+    if _system_swift_has_priority_escalation_symbol():
+        probe_results = [(app, binary, probe, *probe(binary)) for app, binary, probe in targets]
+        if all(ok for _app, _binary, _probe, ok, _error in probe_results):
+            return False, "native"
+        return False, "failed"
+
+    changed = False
+    for app, binary, _probe in targets:
+        if not binary.is_file():
+            continue
+        if (
+            _binary_uses_shim(binary)
+            and not _binary_uses_embedded_swift_core(binary)
+            and _priority_escalation_overlay_is_minimal(app / "Contents" / "Frameworks" / "libswift_Concurrency.dylib")
+            and _has_computer_use_entitlements(app)
+        ):
+            continue
+        changed = _patch_priority_escalation_shim(app, binary) or changed
+
+    for app, binary, probe in targets:
+        if not binary.is_file():
+            continue
+        if not _binary_uses_shim(binary):
+            raise RuntimeError(f"Computer Use Swift compatibility patch failed: {binary} still uses system Swift Concurrency")
+        if "SkyComputerUseService" in binary.name:
+            continue
+        ok, error = probe(binary)
+        if not ok:
+            raise RuntimeError(f"Computer Use Swift compatibility patch failed: {error}")
+    return changed, "swift-priority-escalation-shim"
+
+
+def _cache_valid(dest: Path, version: str) -> bool:
+    manifest = dest / ".codex-plugin" / "plugin.json"
+    mcp = dest / ".mcp.json"
+    binary = _binary_path(dest)
+    if not manifest.is_file() or not mcp.is_file() or not os.access(binary, os.X_OK):
+        return False
+    try:
+        with manifest.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    return payload.get("name") == "computer-use" and str(payload.get("version")) == version
+
+
+def _mcp_uses_native_binary(cache_root: Path) -> bool:
+    try:
+        with (cache_root / ".mcp.json").open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    servers = payload.get("mcpServers") or {}
+    command = str(_mcp_command_path())
+    expected = {
+        "command": command,
+        "args": ["mcp"],
+    }
+    return (servers.get("computer-use") or {}) == expected and "computer_use" not in servers
+
+
+def _mcp_configured_for_header(config_text: str, header: str, binary: Path) -> bool:
+    lines = config_text.splitlines()
+    section = _find_section(lines, header)
+    if section is None:
+        return False
+    start, end = section
+    body = "\n".join(lines[start + 1 : end])
+    return (
+        re.search(rf'(?m)^\s*command\s*=\s*{re.escape(json.dumps(str(binary)))}\s*$', body)
+        is not None
+        and re.search(r'(?m)^\s*args\s*=\s*\[\s*"mcp"\s*\]\s*$', body) is not None
+    )
+
+
+def _direct_mcp_configured(config_text: str, binary: Path) -> bool:
+    return _find_section(config_text.splitlines(), DIRECT_MCP_HEADER) is None
+
+
+def _direct_mcp_alias_configured(config_text: str, binary: Path) -> bool:
+    return _find_section(config_text.splitlines(), DIRECT_MCP_ALIAS_HEADER) is None
+
+
+def _direct_mcp_underscore_configured(config_text: str, binary: Path) -> bool:
+    return _find_section(config_text.splitlines(), DIRECT_MCP_UNDERSCORE_HEADER) is None
+
+
+def _direct_mcp_underscore_alias_configured(config_text: str, binary: Path) -> bool:
+    return _find_section(config_text.splitlines(), DIRECT_MCP_UNDERSCORE_ALIAS_HEADER) is None
+
+
+def _direct_mcp_all_configured(config_text: str, binary: Path) -> bool:
+    return all(_find_section(config_text.splitlines(), header) is None for header in ALL_DIRECT_MCP_HEADERS)
+
+
+def _direct_mcp_absence_status(config_text: str) -> dict[str, Any]:
+    lines = config_text.splitlines()
+    present = [header for header in ALL_DIRECT_MCP_HEADERS if _find_section(lines, header) is not None]
+    return {
+        "ok": not present,
+        "present": present,
+        "checked": ALL_DIRECT_MCP_HEADERS,
+    }
+
+
+def _health_layers(
+    *,
+    configured: bool,
+    discoverable: bool,
+    runtime_ready: bool,
+    native_smoke: dict[str, Any],
+    ownership: dict[str, Any],
+) -> dict[str, Any]:
+    mcp_client_ownership = bool(ownership.get("ok"))
+    appserver_rendezvous = runtime_ready and mcp_client_ownership and bool(native_smoke.get("appserver_rendezvous"))
+    operational = runtime_ready and mcp_client_ownership and bool(native_smoke.get("operational"))
+    second_mouse_verified = operational and bool(native_smoke.get("second_mouse_verified"))
+    return {
+        "configured": configured,
+        "discoverable": discoverable,
+        "runtime_ready": runtime_ready,
+        "mcp_client_ownership": mcp_client_ownership,
+        "appserver_rendezvous": appserver_rendezvous,
+        "operational": operational,
+        "second_mouse_verified": second_mouse_verified,
+    }
+
+
+def ensure_mcp_native_config(cache_root: Path) -> bool:
+    path = cache_root / ".mcp.json"
+    try:
+        with path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    servers = payload.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        servers = {}
+        payload["mcpServers"] = servers
+    command = str(_mcp_command_path())
+    desired = {
+        "command": command,
+        "args": ["mcp"],
+    }
+    if servers.get("computer-use") == desired and "computer_use" not in servers:
+        return False
+    servers["computer-use"] = desired
+    servers.pop("computer_use", None)
+    tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return True
+
+
+def _ensure_text_file(path: Path, content: str, *, executable: bool = False) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    current = path.read_text(encoding="utf-8") if path.exists() else ""
+    changed = False
+    if current != content:
+        tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
+        tmp.write_text(content, encoding="utf-8")
+        if executable:
+            os.chmod(tmp, 0o755)
+        os.replace(tmp, path)
+        changed = True
+    if executable and not os.access(path, os.X_OK):
+        os.chmod(path, 0o755)
+        changed = True
+    return changed
+
+
+def ensure_canonical_skill_metadata() -> bool:
+    if not CANONICAL_COMPUTER_USE_SKILL.is_file():
+        return False
+    return _ensure_text_file(
+        CANONICAL_COMPUTER_USE_SKILL.parent / "agents" / "openai.yaml",
+        CANONICAL_SKILL_AGENT_METADATA,
+    )
+
+
+def _canonical_skill_metadata_ok() -> bool:
+    path = CANONICAL_COMPUTER_USE_SKILL.parent / "agents" / "openai.yaml"
+    return (
+        CANONICAL_COMPUTER_USE_SKILL.is_file()
+        and path.is_file()
+        and path.read_text(encoding="utf-8") == CANONICAL_SKILL_AGENT_METADATA
+    )
+
+
+def _remove_path(path: Path) -> bool:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return True
+    if path.is_dir():
+        shutil.rmtree(path)
+        return True
+    return False
+
+
+def ensure_plugin_skill_suppressed(plugin_root: Path) -> bool:
+    """Keep plugin MCP discovery, but do not publish a second visible skill.
+
+    Codex 1.0.793 does not filter skill picker entries by the old shim's
+    `metadata.hidden` or `policy.allow_implicit_invocation` fields. Leaving a
+    plugin `SKILL.md` therefore creates a visible "Computer Use Shim" entry.
+    The native tools are still discovered through the plugin `.mcp.json`, so the
+    plugin skill root should be absent and the canonical user-facing skill under
+    `~/.codex/skills/macos-computer-use` remains the single visible skill.
+    """
+    skills_root = plugin_root / "skills"
+    skill_dir = skills_root / "computer-use"
+    hidden_notice = plugin_root / ".codex-plugin" / "computer-use-skill.hidden.md"
+    suppressed_notice = plugin_root / ".codex-plugin" / "computer-use-skill.suppressed.md"
+    manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
+    if not CANONICAL_COMPUTER_USE_SKILL.is_file():
+        return False
+    changed = False
+    changed = _remove_path(skill_dir) or changed
+    try:
+        skills_root.rmdir()
+        changed = True
+    except OSError:
+        pass
+    if hidden_notice.exists():
+        hidden_notice.unlink()
+        changed = True
+    changed = _ensure_text_file(suppressed_notice, PLUGIN_SKILL_SUPPRESSED_NOTICE) or changed
+    try:
+        with manifest_path.open("r", encoding="utf-8-sig") as fh:
+            manifest = json.load(fh)
+    except Exception:
+        manifest = None
+    if isinstance(manifest, dict) and "skills" in manifest:
+        manifest.pop("skills", None)
+        tmp = manifest_path.with_name(manifest_path.name + f".tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+        os.replace(tmp, manifest_path)
+        changed = True
+    return changed
+
+
+def _plugin_skill_suppressed_ok(plugin_root: Path) -> bool:
+    skills_root = plugin_root / "skills"
+    skill_dir = skills_root / "computer-use"
+    hidden_notice = plugin_root / ".codex-plugin" / "computer-use-skill.hidden.md"
+    suppressed_notice = plugin_root / ".codex-plugin" / "computer-use-skill.suppressed.md"
+    manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
+    try:
+        with manifest_path.open("r", encoding="utf-8-sig") as fh:
+            manifest = json.load(fh)
+    except Exception:
+        return False
+    return (
+        CANONICAL_COMPUTER_USE_SKILL.is_file()
+        and isinstance(manifest, dict)
+        and "skills" not in manifest
+        and not skill_dir.exists()
+        and not hidden_notice.exists()
+        and suppressed_notice.is_file()
+        and suppressed_notice.read_text(encoding="utf-8") == PLUGIN_SKILL_SUPPRESSED_NOTICE
+    )
+
+
+def _copy_cache(source: Path, dest: Path) -> None:
+    tmp = dest.with_name(dest.name + f".tmp-{os.getpid()}")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["/usr/bin/ditto", str(source), str(tmp)], check=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    tmp.rename(dest)
+
+
+def _runtime_install_valid(cache_root: Path, version: str) -> bool:
+    if not RUNTIME_APP.is_dir():
+        return False
+    try:
+        bundle_id = _app_bundle_identifier(RUNTIME_APP)
+    except Exception:
+        return False
+    if bundle_id != COMPUTER_USE_SERVICE_BUNDLE_ID:
+        return False
+    try:
+        with (RUNTIME_APP / "Contents" / "Info.plist").open("rb") as fh:
+            payload = plistlib.load(fh)
+    except Exception:
+        return False
+    return (
+        str(payload.get("CFBundleVersion") or "") == version.split(".")[-1]
+        and _runtime_binary_path().is_file()
+        and _runtime_service_binary_path().is_file()
+        and _is_openai_signed(_runtime_service_app_path())
+        and _is_openai_signed(_runtime_client_app_path())
+        and _service_app_path(cache_root).is_dir()
+    )
+
+
+def ensure_runtime_install(cache_root: Path, version: str) -> bool:
+    """Keep the LaunchServices runtime aligned with the cached plugin copy.
+
+    The MCP client starts `com.openai.sky.CUAService` by bundle id.
+    LaunchServices must resolve that id to `$HOME/.codex/computer-use`, not to
+    a stale plugin-cache copy. If that runtime copy is stale or unpatched, real
+    tool calls fail even while `tools/list` succeeds.
+    """
+    if _runtime_install_valid(cache_root, version):
+        return False
+    tmp = RUNTIME_BASE / f".Codex Computer Use.app.tmp-{os.getpid()}"
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    RUNTIME_BASE.mkdir(parents=True, exist_ok=True)
+    source_app = SIGNED_MARKETPLACE_APP if SIGNED_MARKETPLACE_APP.is_dir() else _source_service_app_path()
+    if not source_app.is_dir():
+        source_app = _service_app_path(cache_root)
+    subprocess.run(["/usr/bin/ditto", str(source_app), str(tmp)], check=True)
+    if RUNTIME_APP.exists():
+        shutil.rmtree(RUNTIME_APP)
+    tmp.rename(RUNTIME_APP)
+    return True
+
+
+def ensure_cache() -> tuple[str, Path, bool]:
+    manifest = _load_plugin_manifest(COMPUTER_USE_SOURCE)
+    version = str(manifest["version"])
+    dest = CACHE_BASE / version
+    changed = False
+    if not _cache_valid(dest, version):
+        _copy_cache(COMPUTER_USE_SOURCE, dest)
+        changed = True
+    return version, dest, changed
+
+
+def _find_section(lines: list[str], header: str) -> tuple[int, int] | None:
+    start = -1
+    for idx, line in enumerate(lines):
+        if line.strip() == header:
+            start = idx
+            break
+    if start < 0:
+        return None
+    end = len(lines)
+    for idx in range(start + 1, len(lines)):
+        stripped = lines[idx].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            end = idx
+            break
+    return start, end
+
+
+def _set_key_in_section(lines: list[str], header: str, key: str, value: str) -> None:
+    section = _find_section(lines, header)
+    if section is None:
+        lines.extend(["", header, f"{key} = {value}"])
+        return
+    start, end = section
+    key_re = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    for idx in range(start + 1, end):
+        if key_re.match(lines[idx]):
+            lines[idx] = f"{key} = {value}"
+            return
+    lines.insert(start + 1, f"{key} = {value}")
+
+
+def _ensure_plugin_section(lines: list[str]) -> None:
+    section = _find_section(lines, PLUGIN_HEADER)
+    if section is None:
+        browser = _find_section(lines, BROWSER_HEADER)
+        insert_at = None
+        if browser is not None:
+            insert_at = browser[1]
+        else:
+            for idx, line in enumerate(lines):
+                if line.startswith("[projects.") or line.startswith("[mcp_servers."):
+                    insert_at = idx
+                    break
+        if insert_at is None:
+            insert_at = len(lines)
+        block = ["", PLUGIN_HEADER, "enabled = true"]
+        lines[insert_at:insert_at] = block
+        return
+    _set_key_in_section(lines, PLUGIN_HEADER, "enabled", "true")
+
+
+def _ensure_marketplace(lines: list[str]) -> None:
+    if _find_section(lines, MARKETPLACE_HEADER) is None:
+        lines.extend(
+            [
+                "",
+                MARKETPLACE_HEADER,
+                f'last_updated = "{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}"',
+                'source_type = "local"',
+                f"source = {json.dumps(str(PATCHED_BUNDLED_MARKETPLACE))}",
+            ]
+        )
+        return
+    _set_key_in_section(lines, MARKETPLACE_HEADER, "source_type", '"local"')
+    _set_key_in_section(lines, MARKETPLACE_HEADER, "source", json.dumps(str(PATCHED_BUNDLED_MARKETPLACE)))
+
+
+def _ensure_direct_mcp_server_for_header(lines: list[str], header: str, binary: Path) -> None:
+    section = _find_section(lines, header)
+    if section is None:
+        marketplace = _find_section(lines, MARKETPLACE_HEADER)
+        insert_at = marketplace[0] if marketplace is not None else len(lines)
+        block = [
+            "",
+            header,
+            f"command = {json.dumps(str(binary))}",
+            'args = ["mcp"]',
+            "startup_timeout_sec = 15",
+            "tool_timeout_sec = 120",
+        ]
+        lines[insert_at:insert_at] = block
+        return
+    _set_key_in_section(lines, header, "command", json.dumps(str(binary)))
+    _set_key_in_section(lines, header, "args", '["mcp"]')
+    _set_key_in_section(lines, header, "startup_timeout_sec", "15")
+    _set_key_in_section(lines, header, "tool_timeout_sec", "120")
+
+
+def _remove_section(lines: list[str], header: str) -> None:
+    while True:
+        section = _find_section(lines, header)
+        if section is None:
+            return
+        start, end = section
+        del lines[start:end]
+        while start < len(lines) and start > 0 and lines[start].strip() == "" and lines[start - 1].strip() == "":
+            del lines[start]
+
+
+def _ensure_direct_mcp_server(lines: list[str], binary: Path) -> None:
+    for header in DIRECT_MCP_HEADERS:
+        _remove_section(lines, header)
+    for header in LEGACY_DIRECT_MCP_HEADERS:
+        _remove_section(lines, header)
+
+
+def _computer_use_disabled(config_text: str) -> bool:
+    return bool(COMPUTER_USE_DISABLED_TOOL_RE.search(config_text))
+
+
+def _scrub_computer_use_disabled_tool(config_text: str) -> str:
+    object_pattern = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.pattern
+    scrubbed = re.sub(r",\s*" + object_pattern, "", config_text, flags=re.DOTALL)
+    scrubbed = re.sub(object_pattern + r"\s*,\s*", "", scrubbed, flags=re.DOTALL)
+    scrubbed = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.sub("", scrubbed)
+    scrubbed = re.sub(
+        r"(?m)^\s*disabled_tools\s*=\s*\[\s*\]\s*\n?",
+        "",
+        scrubbed,
+    )
+    return scrubbed
+
+
+def _remove_computer_use_from_disabled_tools_line(line: str) -> str | None:
+    prefix, sep, value = line.partition("=")
+    if not sep or prefix.strip() != "disabled_tools" or COMPUTER_USE_PLUGIN_ID not in value:
+        return line
+
+    stripped = value.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return line
+
+    entries = re.findall(r"\{[^{}]*\}", stripped[1:-1])
+    kept = [entry for entry in entries if not COMPUTER_USE_DISABLED_TOOL_RE.fullmatch(entry.strip())]
+    if not kept:
+        return None
+    return f"{prefix.rstrip()} = [{', '.join(kept)}]"
+
+
+def _ensure_tool_suggest_allows_computer_use(lines: list[str]) -> None:
+    section = _find_section(lines, TOOL_SUGGEST_HEADER)
+    if section is None:
+        return
+    start, end = section
+    idx = start + 1
+    while idx < end:
+        replacement = _remove_computer_use_from_disabled_tools_line(lines[idx])
+        if replacement is None:
+            del lines[idx]
+            end -= 1
+            continue
+        lines[idx] = replacement
+        idx += 1
+
+
+def _ensure_notify(lines: list[str], notify_command: Path) -> None:
+    value = f"notify = [{json.dumps(str(notify_command))}, \"turn-ended\"]"
+    for idx, line in enumerate(lines):
+        if re.match(r"^\s*notify\s*=", line):
+            lines[idx] = value
+            return
+    insert_at = 0
+    for idx, line in enumerate(lines):
+        if line.startswith("[features]"):
+            insert_at = idx
+            break
+        if re.match(r"^\s*approval_policy\s*=", line):
+            insert_at = idx + 1
+    lines[insert_at:insert_at] = ["", value]
+
+
+def ensure_config(cache_root: Path) -> bool:
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    original = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
+    lines = original.splitlines()
+    mcp_command = _mcp_command_path()
+    _ensure_notify(lines, COMPUTER_USE_NOTIFY)
+    _ensure_plugin_section(lines)
+    _ensure_direct_mcp_server(lines, mcp_command)
+    _ensure_marketplace(lines)
+    _ensure_tool_suggest_allows_computer_use(lines)
+    updated = _scrub_computer_use_disabled_tool("\n".join(lines).rstrip() + "\n")
+    if updated == original:
+        return False
+    tmp = CONFIG.with_name(CONFIG.name + f".tmp-{os.getpid()}")
+    tmp.write_text(updated, encoding="utf-8")
+    os.replace(tmp, CONFIG)
+    return True
+
+
+def ensure() -> dict[str, Any]:
+    app_bundle_id = _verify_openai_codex_app()
+    if not COMPUTER_USE_SOURCE.is_dir():
+        raise RuntimeError(f"missing app-bundled computer-use plugin: {COMPUTER_USE_SOURCE}")
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK.open("w", encoding="utf-8") as lock_fh:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        patched_marketplace_changed = ensure_patched_bundled_marketplace()
+        tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
+        version, cache_root, cache_changed = ensure_cache()
+        runtime_install_changed = ensure_runtime_install(cache_root, version)
+        broker_backup_changed = ensure_broker_backup()
+        native_launcher_changed = ensure_native_launcher()
+        notify_wrapper_changed = ensure_notify_wrapper()
+        mcp_changed = ensure_mcp_native_config(cache_root)
+        plugin_skill_changed = ensure_plugin_skill_suppressed(cache_root)
+        canonical_skill_metadata_changed = ensure_canonical_skill_metadata()
+        config_changed = ensure_config(cache_root)
+        appdata_privacy = _computer_use_appdata_privacy_status()
+        runtime_patch_changed, runtime_patch = ensure_runtime_compat(cache_root)
+        launch_services_registered = _register_launch_services(cache_root)
+        service_warm_ok, service_warm_error = _warm_service(cache_root)
+        stale_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=True)
+        stale_notify_cleanup = cleanup_stale_notify_clients()
+        launch_agent_changed, launch_agent_loaded = ensure_launch_agent()
+        dialog_autopilot = ensure_dialog_autopilot()
+    binary = _preferred_native_binary_path(cache_root)
+    service_binary = _preferred_service_binary_path(cache_root)
+    config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
+    computer_use_disabled = _computer_use_disabled(config_text)
+    marketplace_source = str(PATCHED_BUNDLED_MARKETPLACE) in config_text
+    mcp_command = _mcp_command_path()
+    direct_mcp_config = _direct_mcp_configured(config_text, mcp_command)
+    direct_mcp_alias_config = _direct_mcp_alias_configured(config_text, mcp_command)
+    direct_mcp_underscore_config = _direct_mcp_underscore_configured(config_text, mcp_command)
+    direct_mcp_underscore_alias_config = _direct_mcp_underscore_alias_configured(config_text, mcp_command)
+    runtime_ok, runtime_error = _runtime_probe(binary)
+    mcp_tools_ok, mcp_tools, mcp_tools_error = _mcp_tools_probe(mcp_command) if mcp_command.is_file() else (False, [], "")
+    mcp_list_apps_call_ok, mcp_list_apps_count, mcp_list_apps_error = (
+        _mcp_tool_call_probe(mcp_command, "list_apps", {}, timeout=15)
+        if mcp_command.is_file() and os.environ.get("CODEX_CU_STANDALONE_TOOL_CALL_PROBE") == "1"
+        else (
+            True,
+            None,
+            "skipped standalone list_apps probe; native tool calls require Codex AppServer rendezvous context",
+        )
+    )
+    patched_marketplace_wrapper_ok, patched_marketplace_wrapper_error = _plugin_local_mcp_wrapper_runtime_probe(
+        PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+    )
+    tmp_marketplace_wrapper_ok, tmp_marketplace_wrapper_error = _plugin_local_mcp_wrapper_runtime_probe(
+        TMP_BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+    )
+    if appdata_privacy.get("ok"):
+        service_runtime_ok, service_runtime_error = (
+            True,
+            "skipped service runtime probe because macOS AppData approval is already persisted",
+        )
+    else:
+        service_runtime_ok, service_runtime_error = _service_runtime_probe(service_binary)
+    service_ready = _service_running(service_binary) or bool(appdata_privacy.get("ok"))
+    direct_mcp_absence = _direct_mcp_absence_status(config_text)
+    ownership = mcp_client_ownership_status()
+    configured = (
+        launch_agent_loaded
+        and not computer_use_disabled
+        and marketplace_source
+        and _patched_bundled_marketplace_ok()
+        and _tmp_bundled_marketplace_ok()
+        and _bundled_marketplace_version_ok(PATCHED_BUNDLED_MARKETPLACE, version)
+        and _bundled_marketplace_version_ok(TMP_BUNDLED_MARKETPLACE, version)
+        and patched_marketplace_wrapper_ok
+        and tmp_marketplace_wrapper_ok
+        and _native_launcher_ok()
+        and _notify_wrapper_ok()
+        and _canonical_skill_metadata_ok()
+        and direct_mcp_absence["ok"]
+    )
+    discoverable = configured and mcp_tools_ok
+    runtime_ready = discoverable and runtime_ok and service_runtime_ok and service_warm_ok and service_ready
+    native_smoke = _native_smoke_status()
+    native_smoke_refreshed = False
+    native_smoke_refresh_error = ""
+    if runtime_ready and not native_smoke.get("operational"):
+        try:
+            native_smoke = _run_native_smoke()
+            native_smoke_refreshed = True
+        except Exception as exc:  # noqa: BLE001
+            native_smoke_refresh_error = str(exc)
+            _log("error", "native smoke refresh failed", command="ensure", error=native_smoke_refresh_error)
+            native_smoke = _native_smoke_status()
+    post_smoke_mcp_cleanup = {
+        "running": 0,
+        "killed": [],
+        "skipped_young": [],
+        "duplicate_grace_seconds": DUPLICATE_MCP_GRACE_SECONDS,
+    }
+    if runtime_ready:
+        post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=True)
+        ownership = mcp_client_ownership_status()
+    health_layers = _health_layers(
+        configured=configured,
+        discoverable=discoverable,
+        runtime_ready=runtime_ready,
+        native_smoke=native_smoke,
+        ownership=ownership,
+    )
+    status = {
+        "ok": health_layers["operational"],
+        "structural_ok": runtime_ready,
+        "health_layers": health_layers,
+        "native_smoke": native_smoke,
+        "native_smoke_refreshed": native_smoke_refreshed,
+        "native_smoke_refresh_error": native_smoke_refresh_error,
+        "mcp_client_ownership": ownership,
+        "openai_codex_app": str(OPENAI_CODEX_APP),
+        "openai_codex_bundle_id": app_bundle_id,
+        "version": version,
+        "cache_root": str(cache_root),
+        "binary": str(binary),
+        "mcp_command": str(mcp_command),
+        "service_binary": str(service_binary),
+        "runtime_ok": runtime_ok,
+        "runtime_error": runtime_error,
+        "mcp_tools_ok": mcp_tools_ok,
+        "mcp_tools": mcp_tools,
+        "mcp_tools_error": mcp_tools_error,
+        "mcp_list_apps_call_ok": mcp_list_apps_call_ok,
+        "mcp_list_apps_count": mcp_list_apps_count,
+        "mcp_list_apps_error": mcp_list_apps_error,
+        "service_runtime_ok": service_runtime_ok,
+        "service_runtime_error": service_runtime_error,
+        "service_ready": service_ready,
+        "service_appdata_privacy": appdata_privacy,
+        "cache_changed": cache_changed,
+        "runtime_install_changed": runtime_install_changed,
+        "broker_backup_changed": broker_backup_changed,
+        "broker_backup_exists": BROKER_BACKUP.is_file(),
+        "native_launcher": str(COMPUTER_USE_NATIVE_LAUNCHER),
+        "native_launcher_changed": native_launcher_changed,
+        "native_launcher_ok": _native_launcher_ok(),
+        "notify_wrapper": str(COMPUTER_USE_NOTIFY),
+        "notify_wrapper_changed": notify_wrapper_changed,
+        "notify_wrapper_ok": _notify_wrapper_ok(),
+        "runtime_app": str(RUNTIME_APP),
+        "patched_marketplace_changed": patched_marketplace_changed,
+        "patched_marketplace": str(PATCHED_BUNDLED_MARKETPLACE),
+        "patched_marketplace_ok": _patched_bundled_marketplace_ok(),
+        "patched_marketplace_version_ok": _bundled_marketplace_version_ok(PATCHED_BUNDLED_MARKETPLACE, version),
+        "patched_marketplace_wrapper_ok": patched_marketplace_wrapper_ok,
+        "patched_marketplace_wrapper_error": patched_marketplace_wrapper_error,
+        "tmp_marketplace_changed": tmp_marketplace_changed,
+        "tmp_marketplace_ok": _tmp_bundled_marketplace_ok(),
+        "tmp_marketplace_version_ok": _bundled_marketplace_version_ok(TMP_BUNDLED_MARKETPLACE, version),
+        "tmp_marketplace_wrapper_ok": tmp_marketplace_wrapper_ok,
+        "tmp_marketplace_wrapper_error": tmp_marketplace_wrapper_error,
+        "mcp_changed": mcp_changed,
+        "plugin_skill_changed": plugin_skill_changed,
+        "plugin_skill_suppressed_ok": _plugin_skill_suppressed_ok(cache_root),
+        "plugin_skill_hidden_ok": _plugin_skill_suppressed_ok(cache_root),
+        "plugin_skill_consolidated": _plugin_skill_suppressed_ok(cache_root),
+        "canonical_skill_metadata_changed": canonical_skill_metadata_changed,
+        "canonical_skill_metadata_ok": _canonical_skill_metadata_ok(),
+        "config_changed": config_changed,
+        "computer_use_disabled": computer_use_disabled,
+        "marketplace_source": marketplace_source,
+        "direct_mcp_config": direct_mcp_config,
+        "direct_mcp_alias_config": direct_mcp_alias_config,
+        "direct_mcp_underscore_config": direct_mcp_underscore_config,
+        "direct_mcp_underscore_alias_config": direct_mcp_underscore_alias_config,
+        "direct_mcp_absence": direct_mcp_absence,
+        "runtime_patch": runtime_patch,
+        "runtime_patch_changed": runtime_patch_changed,
+        "launch_services_registered": launch_services_registered,
+        "service_warm_ok": service_warm_ok,
+        "service_warm_error": service_warm_error,
+        "stale_mcp_cleanup": stale_mcp_cleanup,
+        "post_smoke_mcp_cleanup": post_smoke_mcp_cleanup,
+        "stale_notify_cleanup": stale_notify_cleanup,
+        "launch_agent": str(LAUNCH_AGENT),
+        "launch_agent_changed": launch_agent_changed,
+        "launch_agent_loaded": launch_agent_loaded,
+        "bootstrap": str(BOOTSTRAP),
+        "bootstrap_exists": BOOTSTRAP.is_file(),
+        "guard_backup": str(GUARD_BACKUP),
+        "guard_backup_exists": GUARD_BACKUP.is_file(),
+        "dialog_autopilot": dialog_autopilot,
+    }
+    if (
+        cache_changed
+        or patched_marketplace_changed
+        or tmp_marketplace_changed
+        or config_changed
+        or runtime_install_changed
+        or broker_backup_changed
+        or native_launcher_changed
+        or notify_wrapper_changed
+        or mcp_changed
+        or plugin_skill_changed
+        or canonical_skill_metadata_changed
+        or runtime_patch_changed
+        or stale_mcp_cleanup.get("killed")
+        or post_smoke_mcp_cleanup.get("killed")
+        or stale_notify_cleanup.get("killed")
+        or launch_agent_changed
+        or launch_services_registered
+    ):
+        _log("info", "computer-use repaired", **status)
+    return status
+
+
+def status() -> dict[str, Any]:
+    app_bundle_id = _verify_openai_codex_app()
+    manifest = _load_plugin_manifest(COMPUTER_USE_SOURCE)
+    version = str(manifest["version"])
+    cache_root = CACHE_BASE / version
+    config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
+    runtime_install_valid = _runtime_install_valid(cache_root, version)
+    binary = _preferred_native_binary_path(cache_root)
+    service_binary = _preferred_service_binary_path(cache_root)
+    plugin_enabled = bool(
+        re.search(r'\[plugins\."computer-use@openai-bundled"\]\s+enabled\s*=\s*true', config_text)
+    )
+    computer_use_disabled = _computer_use_disabled(config_text)
+    cache_valid = _cache_valid(cache_root, version)
+    plugin_skill_suppressed_ok = _plugin_skill_suppressed_ok(cache_root)
+    canonical_skill_metadata_ok = _canonical_skill_metadata_ok()
+    mcp_native_config = _mcp_uses_native_binary(cache_root)
+    marketplace_source = str(PATCHED_BUNDLED_MARKETPLACE) in config_text
+    patched_marketplace_version_ok = _bundled_marketplace_version_ok(PATCHED_BUNDLED_MARKETPLACE, version)
+    tmp_marketplace_version_ok = _bundled_marketplace_version_ok(TMP_BUNDLED_MARKETPLACE, version)
+    tmp_marketplace_ok = _tmp_bundled_marketplace_ok()
+    notify_binary = str(COMPUTER_USE_NOTIFY) in config_text and _notify_wrapper_ok()
+    mcp_command = _mcp_command_path()
+    direct_mcp_config = _direct_mcp_configured(config_text, mcp_command)
+    direct_mcp_alias_config = _direct_mcp_alias_configured(config_text, mcp_command)
+    direct_mcp_underscore_config = _direct_mcp_underscore_configured(config_text, mcp_command)
+    direct_mcp_underscore_alias_config = _direct_mcp_underscore_alias_configured(config_text, mcp_command)
+    runtime_ok, runtime_error = _runtime_probe(binary) if cache_valid else (False, "")
+    mcp_tools_ok, mcp_tools, mcp_tools_error = (
+        _mcp_tools_probe(mcp_command) if cache_valid and mcp_command.is_file() else (False, [], "")
+    )
+    mcp_list_apps_call_ok, mcp_list_apps_count, mcp_list_apps_error = (
+        _mcp_tool_call_probe(mcp_command, "list_apps", {}, timeout=15)
+        if cache_valid
+        and mcp_command.is_file()
+        and os.environ.get("CODEX_CU_STANDALONE_TOOL_CALL_PROBE") == "1"
+        else (
+            True,
+            None,
+            "skipped standalone list_apps probe; native tool calls require Codex AppServer rendezvous context",
+        )
+    )
+    patched_marketplace_wrapper_ok, patched_marketplace_wrapper_error = _plugin_local_mcp_wrapper_runtime_probe(
+        PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+    )
+    tmp_marketplace_wrapper_ok, tmp_marketplace_wrapper_error = _plugin_local_mcp_wrapper_runtime_probe(
+        TMP_BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+    )
+    appdata_privacy = _computer_use_appdata_privacy_status()
+    if not cache_valid:
+        service_runtime_ok, service_runtime_error = (False, "")
+    elif appdata_privacy.get("ok"):
+        service_runtime_ok, service_runtime_error = (
+            True,
+            "skipped service runtime probe because macOS AppData approval is already persisted",
+        )
+    else:
+        service_runtime_ok, service_runtime_error = _service_runtime_probe(service_binary)
+    runtime_patch = (
+        "swift-priority-escalation-shim"
+        if _binary_uses_shim(binary) or _binary_uses_shim(service_binary)
+        else "native"
+    )
+    stale_mcp_clients = cleanup_stale_mcp_clients(kill_duplicates=False)
+    stale_notify_clients = cleanup_stale_notify_clients(kill_stale=False)
+    service_running = _service_running(service_binary)
+    service_ready = service_running or bool(appdata_privacy.get("ok"))
+    launch_agent_exists = LAUNCH_AGENT.is_file()
+    launch_agent_config_ok = _launch_agent_config_ok()
+    launch_agent_loaded = _launch_agent_loaded()
+    bootstrap_exists = BOOTSTRAP.is_file()
+    guard_backup_exists = GUARD_BACKUP.is_file()
+    broker_exists = COMPUTER_USE_BROKER.is_file()
+    broker_backup_exists = BROKER_BACKUP.is_file()
+    native_launcher_exists = COMPUTER_USE_NATIVE_LAUNCHER.is_file()
+    native_launcher_ok = _native_launcher_ok()
+    dialog_autopilot = dialog_autopilot_status()
+    direct_mcp_absence = _direct_mcp_absence_status(config_text)
+    native_smoke = _native_smoke_status()
+    ownership = mcp_client_ownership_status()
+    configured = (
+        cache_valid
+        and plugin_enabled
+        and not computer_use_disabled
+        and marketplace_source
+        and _patched_bundled_marketplace_ok()
+        and tmp_marketplace_ok
+        and patched_marketplace_version_ok
+        and tmp_marketplace_version_ok
+        and patched_marketplace_wrapper_ok
+        and tmp_marketplace_wrapper_ok
+        and native_launcher_ok
+        and notify_binary
+        and mcp_native_config
+        and plugin_skill_suppressed_ok
+        and canonical_skill_metadata_ok
+        and runtime_install_valid
+        and direct_mcp_absence["ok"]
+        and app_bundle_id == OPENAI_CODEX_BUNDLE_ID
+        and launch_agent_exists
+        and launch_agent_config_ok
+        and launch_agent_loaded
+        and bootstrap_exists
+        and guard_backup_exists
+        and broker_exists
+        and broker_backup_exists
+    )
+    discoverable = configured and mcp_tools_ok
+    runtime_ready = discoverable and runtime_ok and service_runtime_ok and service_ready
+    health_layers = _health_layers(
+        configured=configured,
+        discoverable=discoverable,
+        runtime_ready=runtime_ready,
+        native_smoke=native_smoke,
+        ownership=ownership,
+    )
+    return {
+        "ok": health_layers["operational"],
+        "structural_ok": runtime_ready,
+        "health_layers": health_layers,
+        "native_smoke": native_smoke,
+        "mcp_client_ownership": ownership,
+        "openai_codex_app": str(OPENAI_CODEX_APP),
+        "openai_codex_bundle_id": app_bundle_id,
+        "version": version,
+        "cache_valid": cache_valid,
+        "runtime_install_valid": runtime_install_valid,
+        "runtime_app": str(RUNTIME_APP),
+        "plugin_enabled": plugin_enabled,
+        "computer_use_disabled": computer_use_disabled,
+        "mcp_native_config": mcp_native_config,
+        "plugin_skill_suppressed_ok": plugin_skill_suppressed_ok,
+        "plugin_skill_hidden_ok": plugin_skill_suppressed_ok,
+        "plugin_skill_consolidated": plugin_skill_suppressed_ok,
+        "canonical_skill_metadata_ok": canonical_skill_metadata_ok,
+        "direct_mcp_config": direct_mcp_config,
+        "direct_mcp_alias_config": direct_mcp_alias_config,
+        "direct_mcp_underscore_config": direct_mcp_underscore_config,
+        "direct_mcp_underscore_alias_config": direct_mcp_underscore_alias_config,
+        "direct_mcp_absence": direct_mcp_absence,
+        "marketplace_source": marketplace_source,
+        "patched_marketplace": str(PATCHED_BUNDLED_MARKETPLACE),
+        "patched_marketplace_ok": _patched_bundled_marketplace_ok(),
+        "patched_marketplace_version_ok": patched_marketplace_version_ok,
+        "patched_marketplace_wrapper_ok": patched_marketplace_wrapper_ok,
+        "patched_marketplace_wrapper_error": patched_marketplace_wrapper_error,
+        "tmp_marketplace_ok": tmp_marketplace_ok,
+        "tmp_marketplace_version_ok": tmp_marketplace_version_ok,
+        "tmp_marketplace_wrapper_ok": tmp_marketplace_wrapper_ok,
+        "tmp_marketplace_wrapper_error": tmp_marketplace_wrapper_error,
+        "notify_binary": notify_binary,
+        "notify_wrapper": str(COMPUTER_USE_NOTIFY),
+        "notify_wrapper_ok": _notify_wrapper_ok(),
+        "runtime_ok": runtime_ok,
+        "runtime_error": runtime_error,
+        "mcp_tools_ok": mcp_tools_ok,
+        "mcp_tools": mcp_tools,
+        "mcp_tools_error": mcp_tools_error,
+        "mcp_list_apps_call_ok": mcp_list_apps_call_ok,
+        "mcp_list_apps_count": mcp_list_apps_count,
+        "mcp_list_apps_error": mcp_list_apps_error,
+        "service_runtime_ok": service_runtime_ok,
+        "service_runtime_error": service_runtime_error,
+        "runtime_patch": runtime_patch,
+        "service_running": service_running,
+        "service_ready": service_ready,
+        "service_appdata_privacy": appdata_privacy,
+        "stale_mcp_clients": stale_mcp_clients,
+        "stale_notify_clients": stale_notify_clients,
+        "launch_agent": str(LAUNCH_AGENT),
+        "launch_agent_exists": launch_agent_exists,
+        "launch_agent_config_ok": launch_agent_config_ok,
+        "launch_agent_loaded": launch_agent_loaded,
+        "bootstrap": str(BOOTSTRAP),
+        "bootstrap_exists": bootstrap_exists,
+        "guard_backup": str(GUARD_BACKUP),
+        "guard_backup_exists": guard_backup_exists,
+        "broker": str(COMPUTER_USE_BROKER),
+        "broker_exists": broker_exists,
+        "broker_backup": str(BROKER_BACKUP),
+        "broker_backup_exists": broker_backup_exists,
+        "native_launcher": str(COMPUTER_USE_NATIVE_LAUNCHER),
+        "native_launcher_exists": native_launcher_exists,
+        "native_launcher_ok": native_launcher_ok,
+        "dialog_autopilot": dialog_autopilot,
+        "cache_root": str(cache_root),
+        "binary": str(binary),
+        "mcp_command": str(mcp_command),
+        "service_binary": str(service_binary),
+    }
+
+
+def main(argv: list[str]) -> int:
+    command = argv[1] if len(argv) > 1 and not argv[1].startswith("-") else "ensure"
+    quiet = "--quiet" in argv
+    try:
+        if command == "status":
+            payload = status()
+        elif command == "record-native-smoke":
+            payload = _record_native_smoke_from_stdin()
+        elif command in {"run-native-smoke", "fresh-native-smoke", "fresh-smoke"}:
+            payload = _run_native_smoke()
+        elif command == "clear-native-smoke":
+            try:
+                NATIVE_SMOKE_STATUS.unlink()
+            except FileNotFoundError:
+                pass
+            payload = _native_smoke_status()
+        elif command == "cleanup-mcp-clients":
+            force_duplicates = "--force-duplicates" in argv
+            if force_duplicates:
+                os.environ["CODEX_CU_FORCE_KILL_DUPLICATE_MCP"] = "1"
+            before = mcp_client_ownership_status()
+            cleanup = cleanup_stale_mcp_clients(kill_duplicates=force_duplicates)
+            after = mcp_client_ownership_status()
+            payload = {
+                "ok": True,
+                "command": command,
+                "force_duplicates": force_duplicates,
+                "cleanup": cleanup,
+                "before": {
+                    "ok": before.get("ok"),
+                    "running": before.get("running"),
+                    "duplicate_parents": before.get("duplicate_parents"),
+                },
+                "after": {
+                    "ok": after.get("ok"),
+                    "running": after.get("running"),
+                    "duplicate_parents": after.get("duplicate_parents"),
+                },
+            }
+        elif command in {"ensure-config", "repair-config"}:
+            LOCK.parent.mkdir(parents=True, exist_ok=True)
+            ensure_config_lock_fh = LOCK.open("w", encoding="utf-8")
+            fcntl.flock(ensure_config_lock_fh.fileno(), fcntl.LOCK_EX)
+            patched_marketplace_changed = ensure_patched_bundled_marketplace()
+            tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
+            version, cache_root, cache_changed = ensure_cache()
+            runtime_install_changed = ensure_runtime_install(cache_root, version)
+            broker_backup_changed = ensure_broker_backup()
+            native_launcher_changed = ensure_native_launcher()
+            notify_wrapper_changed = ensure_notify_wrapper()
+            mcp_changed = ensure_mcp_native_config(cache_root)
+            plugin_skill_changed = ensure_plugin_skill_suppressed(cache_root)
+            canonical_skill_metadata_changed = ensure_canonical_skill_metadata()
+            changed = ensure_config(cache_root)
+            runtime_patch_changed, runtime_patch = ensure_runtime_compat(cache_root)
+            stale_notify_cleanup = cleanup_stale_notify_clients(max_age_seconds=5)
+            launch_agent_changed, launch_agent_loaded = ensure_launch_agent()
+            config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
+            binary = _runtime_binary_path() if _runtime_binary_path().is_file() else _binary_path(cache_root)
+            mcp_command = _mcp_command_path()
+            direct_mcp_absence = _direct_mcp_absence_status(config_text)
+            structural_ok = (
+                not _computer_use_disabled(config_text)
+                and str(PATCHED_BUNDLED_MARKETPLACE) in config_text
+                and _patched_bundled_marketplace_ok()
+                and _tmp_bundled_marketplace_ok()
+                and _bundled_marketplace_version_ok(PATCHED_BUNDLED_MARKETPLACE, version)
+                and _bundled_marketplace_version_ok(TMP_BUNDLED_MARKETPLACE, version)
+                and _canonical_skill_metadata_ok()
+                and _native_launcher_ok()
+                and _notify_wrapper_ok()
+                and direct_mcp_absence["ok"]
+                and _launch_agent_config_ok()
+                and launch_agent_loaded
+                and BOOTSTRAP.is_file()
+                and GUARD_BACKUP.is_file()
+            )
+            native_smoke = _native_smoke_status()
+            ownership = mcp_client_ownership_status()
+            runtime_ready = (
+                structural_ok
+                and RUNTIME_APP.is_dir()
+                and runtime_patch in {"native", "signed-native", "swift-priority-escalation-shim"}
+            )
+            health_layers = _health_layers(
+                configured=structural_ok,
+                discoverable=structural_ok and _native_launcher_ok(),
+                runtime_ready=runtime_ready,
+                native_smoke=native_smoke,
+                ownership=ownership,
+            )
+            payload = {
+                "ok": all(health_layers.values()),
+                "structural_ok": structural_ok,
+                "health_layers": health_layers,
+                "native_smoke": native_smoke,
+                "mcp_client_ownership": ownership,
+                "command": command,
+                "version": version,
+                "cache_root": str(cache_root),
+                "cache_changed": cache_changed,
+                "runtime_install_changed": runtime_install_changed,
+                "broker_backup_changed": broker_backup_changed,
+                "broker_backup_exists": BROKER_BACKUP.is_file(),
+                "native_launcher": str(COMPUTER_USE_NATIVE_LAUNCHER),
+                "native_launcher_changed": native_launcher_changed,
+                "native_launcher_ok": _native_launcher_ok(),
+                "notify_wrapper": str(COMPUTER_USE_NOTIFY),
+                "notify_wrapper_changed": notify_wrapper_changed,
+                "notify_wrapper_ok": _notify_wrapper_ok(),
+                "runtime_app": str(RUNTIME_APP),
+                "patched_marketplace_changed": patched_marketplace_changed,
+                "patched_marketplace": str(PATCHED_BUNDLED_MARKETPLACE),
+                "patched_marketplace_ok": _patched_bundled_marketplace_ok(),
+                "patched_marketplace_version_ok": _bundled_marketplace_version_ok(PATCHED_BUNDLED_MARKETPLACE, version),
+                "tmp_marketplace_changed": tmp_marketplace_changed,
+                "tmp_marketplace_ok": _tmp_bundled_marketplace_ok(),
+                "tmp_marketplace_version_ok": _bundled_marketplace_version_ok(TMP_BUNDLED_MARKETPLACE, version),
+                "mcp_changed": mcp_changed,
+                "plugin_skill_changed": plugin_skill_changed,
+                "plugin_skill_suppressed_ok": _plugin_skill_suppressed_ok(cache_root),
+                "plugin_skill_hidden_ok": _plugin_skill_suppressed_ok(cache_root),
+                "plugin_skill_consolidated": _plugin_skill_suppressed_ok(cache_root),
+                "canonical_skill_metadata_changed": canonical_skill_metadata_changed,
+                "canonical_skill_metadata_ok": _canonical_skill_metadata_ok(),
+                "runtime_patch": runtime_patch,
+                "runtime_patch_changed": runtime_patch_changed,
+                "config_changed": changed,
+                "stale_notify_cleanup": stale_notify_cleanup,
+                "launch_agent_changed": launch_agent_changed,
+                "launch_agent": str(LAUNCH_AGENT),
+                "launch_agent_loaded": launch_agent_loaded,
+                "launch_agent_config_ok": _launch_agent_config_ok(),
+                "bootstrap": str(BOOTSTRAP),
+                "bootstrap_exists": BOOTSTRAP.is_file(),
+                "guard_backup": str(GUARD_BACKUP),
+                "guard_backup_exists": GUARD_BACKUP.is_file(),
+                "computer_use_disabled": _computer_use_disabled(config_text),
+                "mcp_command": str(mcp_command),
+                "direct_mcp_config": _direct_mcp_configured(config_text, mcp_command),
+                "direct_mcp_alias_config": _direct_mcp_alias_configured(config_text, mcp_command),
+                "direct_mcp_underscore_config": _direct_mcp_underscore_configured(config_text, mcp_command),
+                "direct_mcp_underscore_alias_config": _direct_mcp_underscore_alias_configured(config_text, mcp_command),
+                "direct_mcp_absence": direct_mcp_absence,
+            }
+            fcntl.flock(ensure_config_lock_fh.fileno(), fcntl.LOCK_UN)
+            ensure_config_lock_fh.close()
+        else:
+            payload = ensure()
+        _write_status_snapshot(payload)
+        if not quiet:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        if command in {"ensure-config", "repair-config"}:
+            return 0 if payload.get("structural_ok") else 1
+        return 0 if payload.get("ok") else 1
+    except Exception as exc:  # noqa: BLE001
+        _log("error", "computer-use guard failed", error=str(exc), command=command)
+        if not quiet:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
