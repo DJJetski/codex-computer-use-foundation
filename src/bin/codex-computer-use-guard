@@ -67,7 +67,12 @@ def _safe_codex_app_path(value: str) -> Path | None:
     value = value.strip()
     if not value or "\x00" in value:
         return None
-    candidate = Path(value).expanduser()
+    # CODEX_CU_CODEX_APP and codex-app-path are local operator inputs. This
+    # function accepts only absolute .app paths; _verify_openai_codex_app then
+    # validates CFBundleIdentifier before the value is persisted or used for
+    # native smoke execution.
+    # codeql[py/path-injection]
+    candidate = Path(value)
     if not candidate.is_absolute() or candidate.suffix != ".app":
         return None
     return candidate
