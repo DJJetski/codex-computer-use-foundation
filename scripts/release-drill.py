@@ -119,17 +119,26 @@ def safe_extract_tarball(tarball: Path, destination: Path) -> None:
             os.chmod(target, mode)
 
 
-def build_public_release(output_dir: Path, name: str, commands: list[dict[str, object]]) -> tuple[Path, Path, str]:
+def build_public_release(
+    output_dir: Path,
+    name: str,
+    commands: list[dict[str, object]],
+    *,
+    allow_dirty: bool = False,
+) -> tuple[Path, Path, str]:
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts/build-public-release.py"),
+        "--output-dir",
+        str(output_dir),
+        "--name",
+        name,
+    ]
+    if allow_dirty:
+        cmd.append("--allow-dirty")
     output = run_checked(
         commands,
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts/build-public-release.py"),
-            "--output-dir",
-            str(output_dir),
-            "--name",
-            name,
-        ],
+        cmd,
         cwd=REPO_ROOT,
         timeout=120,
     )
@@ -257,6 +266,11 @@ def main() -> int:
     parser.add_argument("--live", action="store_true", help="destructively uninstall/reinstall the real target home")
     parser.add_argument("--yes", action="store_true", help="required with --live")
     parser.add_argument("--keep-temp", action="store_true", help="keep extracted download directory for debugging")
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="pass through to build-public-release for local unpublished drills from a dirty checkout",
+    )
     args = parser.parse_args()
 
     if args.live and not args.yes:
@@ -290,7 +304,12 @@ def main() -> int:
             tarball = Path(args.tarball).expanduser().resolve()
             expected_sha256 = args.expected_sha256
         else:
-            release_root, tarball, expected_sha256 = build_public_release(output_dir, args.name, commands)
+            release_root, tarball, expected_sha256 = build_public_release(
+                output_dir,
+                args.name,
+                commands,
+                allow_dirty=args.allow_dirty,
+            )
         if args.checksum_file:
             expected_sha256 = checksum_from_file(Path(args.checksum_file).expanduser().resolve())
         verified_sha256 = None

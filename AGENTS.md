@@ -29,12 +29,12 @@ Important invariants:
 - Do not hide AppleScript, Accessibility, `cliclick`, screenshots, Playwright,
   Keyboard Maestro, or VPN inside the Computer Use MCP path.
 - `codex-dialog-autopilot` is a separate operator-dialog layer for narrow local
-  allow/OK/helper/firewall prompts. It is not native Computer Use
+  allow/OK/helper prompts. It is not native Computer Use
   health and must not be used as a Computer Use fallback.
 - Fresh native success requires authoritative Codex-context smoke, not just
   structural config.
 - If a fresh thread does not show `mcp__computer_use__`, try `tool_search` for
-  `computer-use list_apps get_app_state click type_text press_key` before
+  `computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text` before
   declaring native tool exposure unavailable.
 - README should stay simple, text-first, and easy to scan. Start the GitHub
   page with the centered text heading, short explanation, and copy-pasteable

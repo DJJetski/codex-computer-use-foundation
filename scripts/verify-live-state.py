@@ -41,7 +41,22 @@ FORBIDDEN_FALLBACK_WORDS = [
     "Keyboard Maestro",
     "screencapture",
     "playwright",
+    "AppleScript",
+    "Accessibility",
+    "VPN",
 ]
+EXPECTED_NATIVE_MCP_TOOLS = (
+    "list_apps",
+    "get_app_state",
+    "click",
+    "perform_secondary_action",
+    "set_value",
+    "select_text",
+    "scroll",
+    "drag",
+    "press_key",
+    "type_text",
+)
 ABSOLUTE_HOME_RE = re.compile(r"/" + r"Users/[A-Za-z0-9._-]+")
 
 
@@ -81,17 +96,23 @@ def source_checks() -> list[dict[str, object]]:
                 checks.append(check(True, f"json valid: {item['source']}"))
             except json.JSONDecodeError as exc:
                 checks.append(check(False, f"json valid: {item['source']}", str(exc)))
-    for source in [
+    mcp_path_sources = [
         repo_path("src/bin/codex-computer-use-native-launcher"),
         repo_path("src/bin/codex-computer-use-broker"),
         repo_path("src/plugin-shim/computer-use/codex-computer-use-mcp"),
         repo_path("src/bin/codex-computer-use-native-smoke"),
-    ]:
+    ]
+    for source in mcp_path_sources:
         text = source.read_text(encoding="utf-8")
         checks.append(check(ABSOLUTE_HOME_RE.search(text) is None, f"portable source path: {source.relative_to(REPO_ROOT)}"))
+        checks.append(
+            check(
+                not any(word in text for word in FORBIDDEN_FALLBACK_WORDS),
+                f"no fallback automation in MCP path source: {source.relative_to(REPO_ROOT)}",
+            )
+        )
     launcher = repo_path("src/bin/codex-computer-use-native-launcher").read_text(encoding="utf-8")
     checks.append(check('exec "$native_binary" "$@"' in launcher, "launcher execs native client in-process"))
-    checks.append(check(not any(word in launcher for word in FORBIDDEN_FALLBACK_WORDS), "launcher has no fallback automation"))
     return checks
 
 
@@ -278,11 +299,19 @@ def guard_status_payload_checks(payload: dict[str, object], *, require_operation
     checks: list[dict[str, object]] = []
     if require_operational:
         layers = payload.get("health_layers") or {}
+        mcp_tools = set(payload.get("mcp_tools") or [])
+        missing_tools = sorted(set(EXPECTED_NATIVE_MCP_TOOLS).difference(mcp_tools))
+        tool_surface = payload.get("mcp_tool_surface") or {}
         checks.extend(
             [
                 check(bool(payload.get("ok")), "guard ok=true"),
                 check(bool(payload.get("structural_ok")), "guard structural_ok=true"),
                 check(all(bool(v) for v in layers.values()), "all guard health layers true", str(layers)),
+                check(bool(payload.get("mcp_tools_ok")), "native MCP tools/list ok=true"),
+                check(not missing_tools, "native MCP full tool surface present", ", ".join(missing_tools)),
+                check(tool_surface.get("ok") is True, "native MCP tool surface status ok=true", str(tool_surface)),
+                check(tuple(tool_surface.get("expected") or ()) == EXPECTED_NATIVE_MCP_TOOLS, "native MCP expected tool contract recorded"),
+                check((tool_surface.get("missing") or []) == [], "native MCP tool surface has no missing tools"),
             ]
         )
         smoke = payload.get("native_smoke") or {}

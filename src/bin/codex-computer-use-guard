@@ -115,6 +115,18 @@ NATIVE_MCP_COMMAND = (
     "./Codex Computer Use.app/Contents/SharedSupport/"
     "SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
 )
+EXPECTED_NATIVE_MCP_TOOLS: tuple[str, ...] = (
+    "list_apps",
+    "get_app_state",
+    "click",
+    "perform_secondary_action",
+    "set_value",
+    "select_text",
+    "scroll",
+    "drag",
+    "press_key",
+    "type_text",
+)
 PLUGIN_SKILL_SUPPRESSED_NOTICE = """# Computer Use Plugin Skill Suppressed
 
 This plugin still owns native Computer Use MCP discovery through `.mcp.json`.
@@ -687,7 +699,7 @@ def _run_native_smoke() -> dict[str, Any]:
     try:
         click_url, click_event, type_event, click_server = _start_native_smoke_click_server(token)
         subprocess.run(
-            ["/usr/bin/open", "-a", "Safari", click_url],
+            ["/usr/bin/open", "-g", "-a", "Safari", click_url],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
@@ -703,6 +715,7 @@ def _run_native_smoke() -> dict[str, Any]:
         "Use only native computer-use MCP tools and follow these numbered steps exactly. "
         "If the native computer-use tools are not exposed yet, use only Codex tool discovery/search to expose computer-use, then continue. "
         "Do not call command_execution, shell, or any non-computer-use GUI/control tool. "
+        "Safari may not be the frontmost app; target Safari by bundle id instead of relying on the active app. "
         "1. Call computer-use/list_apps exactly twice. "
         "2. Call computer-use/get_app_state for Safari using bundle id com.apple.Safari. "
         "3. Call computer-use/click on the button labeled Native Smoke Button. "
@@ -1491,7 +1504,7 @@ def _plugin_local_mcp_wrapper_runtime_probe(plugin_root: Path) -> tuple[bool, st
     if not wrapper.is_file():
         return False, f"missing plugin wrapper: {wrapper}"
     try:
-        result = _run_capture([str(wrapper), "--help"], timeout=10)
+        result = _run_capture([str(wrapper), "--help"], timeout=10, env=_launcher_probe_env())
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
     if result.returncode == 0:
@@ -1916,7 +1929,18 @@ def _cleanup_service_probe_processes(binary: Path) -> None:
         _kill_pid(pid)
 
 
-def _run_capture(cmd: list[str], *, timeout: int = 10) -> subprocess.CompletedProcess[str]:
+def _launcher_probe_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["CODEX_CU_LAUNCHER_SKIP_GUARD"] = "1"
+    return env
+
+
+def _run_capture(
+    cmd: list[str],
+    *,
+    timeout: int = 10,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         stdout=subprocess.PIPE,
@@ -1924,6 +1948,7 @@ def _run_capture(cmd: list[str], *, timeout: int = 10) -> subprocess.CompletedPr
         text=True,
         check=False,
         timeout=timeout,
+        env=env,
     )
 
 
@@ -1983,6 +2008,7 @@ def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str]:
             text=True,
             check=False,
             timeout=10,
+            env=_launcher_probe_env(),
         )
     except Exception as exc:  # noqa: BLE001
         return False, [], str(exc)
@@ -2007,13 +2033,26 @@ def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str]:
             if isinstance(tool, dict) and tool.get("name"):
                 tools.append(str(tool["name"]))
 
-    required = {"list_apps", "get_app_state", "click", "type_text", "press_key"}
+    required = set(EXPECTED_NATIVE_MCP_TOOLS)
     missing = sorted(required.difference(tools))
-    if result.returncode != 0 and not tools:
+    if result.returncode != 0:
         errors.append(f"native MCP probe exited with {result.returncode}")
     if missing:
         errors.append(f"missing expected tools: {', '.join(missing)}")
     return not errors, tools, "; ".join(errors)
+
+
+def _mcp_tool_surface(tools: list[str], *, ok: bool) -> dict[str, Any]:
+    observed = sorted(set(tools))
+    missing = sorted(set(EXPECTED_NATIVE_MCP_TOOLS).difference(observed))
+    unexpected = sorted(set(observed).difference(EXPECTED_NATIVE_MCP_TOOLS))
+    return {
+        "ok": bool(ok) and not missing,
+        "expected": list(EXPECTED_NATIVE_MCP_TOOLS),
+        "observed": observed,
+        "missing": missing,
+        "unexpected": unexpected,
+    }
 
 
 def _mcp_tool_call_probe(binary: Path, tool_name: str, arguments: dict[str, Any], *, timeout: int = 15) -> tuple[bool, int | None, str]:
@@ -2048,6 +2087,7 @@ def _mcp_tool_call_probe(binary: Path, tool_name: str, arguments: dict[str, Any]
             text=True,
             check=False,
             timeout=timeout,
+            env=_launcher_probe_env(),
         )
     except Exception as exc:  # noqa: BLE001
         return False, None, str(exc)
@@ -3014,6 +3054,7 @@ def ensure() -> dict[str, Any]:
     direct_mcp_underscore_alias_config = _direct_mcp_underscore_alias_configured(config_text, mcp_command)
     runtime_ok, runtime_error = _runtime_probe(binary)
     mcp_tools_ok, mcp_tools, mcp_tools_error = _mcp_tools_probe(mcp_command) if mcp_command.is_file() else (False, [], "")
+    mcp_tool_surface = _mcp_tool_surface(mcp_tools, ok=mcp_tools_ok)
     mcp_list_apps_call_ok, mcp_list_apps_count, mcp_list_apps_error = (
         _mcp_tool_call_probe(mcp_command, "list_apps", {}, timeout=15)
         if mcp_command.is_file() and os.environ.get("CODEX_CU_STANDALONE_TOOL_CALL_PROBE") == "1"
@@ -3116,6 +3157,9 @@ def ensure() -> dict[str, Any]:
         "mcp_tools_ok": mcp_tools_ok,
         "mcp_tools": mcp_tools,
         "mcp_tools_error": mcp_tools_error,
+        "mcp_tool_surface": mcp_tool_surface,
+        "expected_mcp_tools": list(EXPECTED_NATIVE_MCP_TOOLS),
+        "mcp_tools_missing": mcp_tool_surface["missing"],
         "mcp_list_apps_call_ok": mcp_list_apps_call_ok,
         "mcp_list_apps_count": mcp_list_apps_count,
         "mcp_list_apps_error": mcp_list_apps_error,
@@ -3232,6 +3276,7 @@ def status() -> dict[str, Any]:
     mcp_tools_ok, mcp_tools, mcp_tools_error = (
         _mcp_tools_probe(mcp_command) if cache_valid and mcp_command.is_file() else (False, [], "")
     )
+    mcp_tool_surface = _mcp_tool_surface(mcp_tools, ok=mcp_tools_ok)
     mcp_list_apps_call_ok, mcp_list_apps_count, mcp_list_apps_error = (
         _mcp_tool_call_probe(mcp_command, "list_apps", {}, timeout=15)
         if cache_valid
@@ -3368,6 +3413,9 @@ def status() -> dict[str, Any]:
         "mcp_tools_ok": mcp_tools_ok,
         "mcp_tools": mcp_tools,
         "mcp_tools_error": mcp_tools_error,
+        "mcp_tool_surface": mcp_tool_surface,
+        "expected_mcp_tools": list(EXPECTED_NATIVE_MCP_TOOLS),
+        "mcp_tools_missing": mcp_tool_surface["missing"],
         "mcp_list_apps_call_ok": mcp_list_apps_call_ok,
         "mcp_list_apps_count": mcp_list_apps_count,
         "mcp_list_apps_error": mcp_list_apps_error,
@@ -3463,6 +3511,7 @@ def main(argv: list[str]) -> int:
             runtime_patch_changed, runtime_patch = ensure_runtime_compat(cache_root)
             stale_notify_cleanup = cleanup_stale_notify_clients(max_age_seconds=5)
             launch_agent_changed, launch_agent_loaded = ensure_launch_agent()
+            dialog_autopilot = ensure_dialog_autopilot()
             config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
             binary = _runtime_binary_path() if _runtime_binary_path().is_file() else _binary_path(cache_root)
             mcp_command = _mcp_command_path()
@@ -3492,8 +3541,8 @@ def main(argv: list[str]) -> int:
             )
             health_layers = _health_layers(
                 configured=structural_ok,
-                discoverable=structural_ok and _native_launcher_ok(),
-                runtime_ready=runtime_ready,
+                discoverable=False,
+                runtime_ready=False,
                 native_smoke=native_smoke,
                 ownership=ownership,
             )
@@ -3504,7 +3553,8 @@ def main(argv: list[str]) -> int:
                 ownership=ownership,
             )
             payload = {
-                "ok": all(health_layers.values()),
+                "ok": False,
+                "structural_only": True,
                 "structural_ok": structural_ok,
                 "health_layers": health_layers,
                 "operational_state": operational_state,
@@ -3552,6 +3602,7 @@ def main(argv: list[str]) -> int:
                 "bootstrap_exists": BOOTSTRAP.is_file(),
                 "guard_backup": str(GUARD_BACKUP),
                 "guard_backup_exists": GUARD_BACKUP.is_file(),
+                "dialog_autopilot": dialog_autopilot,
                 "computer_use_disabled": _computer_use_disabled(config_text),
                 "mcp_command": str(mcp_command),
                 "direct_mcp_config": _direct_mcp_configured(config_text, mcp_command),

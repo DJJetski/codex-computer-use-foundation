@@ -58,7 +58,7 @@ Use this skill when the task requires operating the real Mac session:
 - read the screen or an app accessibility tree
 - click, type, scroll, drag, press keys, or set UI values
 - drive a logged-in Safari or Google Chrome session
-- handle local allow/OK/helper/firewall/browser-control dialogs
+- handle local allow/OK/helper/browser-control dialogs
 - diagnose or repair native Codex Computer Use availability
 - complete a GUI-only workflow where an API or dedicated plugin is not enough
 
@@ -71,8 +71,8 @@ skill and stay in the user's normal browser session.
 2. Use native Codex Computer Use first. The `mcp__computer_use__` namespace is
    lazy-loaded in many fresh Codex threads, so initial absence from the active
    tool list is not a failure. If it is not already visible, call `tool_search`
-   for `computer-use list_apps get_app_state click type_text press_key` before
-   running guard diagnostics or trying any other GUI path.
+   for `computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text`
+   before running guard diagnostics or trying any other GUI path.
 3. If `tool_search` exposes the namespace, immediately prove the live native
    path with `mcp__computer_use__.list_apps` and continue natively. If native
    tools are still absent after `tool_search`, run
@@ -197,9 +197,10 @@ The guard must keep all of these true:
 - this canonical skill has `agents/openai.yaml` UI metadata so the normal skill
   picker has one clear `Computer Use` entry
 - native client runtime probe passes
-- native launcher `--help` and full status/ensure `tools/list` probe return expected
-  tools including
-  `list_apps`, `get_app_state`, `click`, `type_text`, and `press_key`
+- native launcher `--help` and full status/ensure `tools/list` probe return the
+  complete native MCP tool surface:
+  `list_apps`, `get_app_state`, `click`, `perform_secondary_action`,
+  `set_value`, `select_text`, `scroll`, `drag`, `press_key`, and `type_text`
 - full `status` and `ensure` expose layered health:
   `configured`, `discoverable`, `runtime_ready`, `mcp_client_ownership`,
   `appserver_rendezvous`, `operational`, and `second_mouse_verified`.
@@ -320,32 +321,39 @@ The routine dialog operator layer is:
 ```
 
 It runs as `io.github.codex-computer-use-foundation.dialog-autopilot` and may accept only
-allowlisted local Codex/browser/helper/network/firewall prompts after the
+allowlisted local Codex/browser/helper prompts after the
 one-time macOS Accessibility/Automation permission exists. It is a convenience
 layer, not the native Computer Use health source. A transient foreground
 `System Events` timeout should not make native Computer Use unhealthy.
 
 The autopilot checks the frontmost app first, then scans only currently running
 allowlisted dialog owners such as `Codex Computer Use`,
-`SkyComputerUseService`, `UserNotificationCenter`, `CoreServicesUIAgent`, and
-Little Snitch. It intentionally does not scan `SecurityAgent` or approve
-privacy, security, TCC, password, account, payment, or cloud-permission
+`SkyComputerUseService`, `UserNotificationCenter`, and `CoreServicesUIAgent`.
+It intentionally does not scan `SecurityAgent` or approve network/firewall
+rules, privacy, security, TCC, password, account, payment, or cloud-permission
 dialogs.
 
 Accept routine local dialogs when the visible text matches the active task and
 the action is reversible or narrowly scoped:
 
-- app-open, helper, automation, network, firewall, browser-control, and local
-  development server prompts
-- Little Snitch prompts for current-task domains or apps, including
-  `chatgpt.com`
+- app-open, helper, automation, browser-control, and local development server
+  prompts
 - local `Allow`, `OK`, `Open`, `Continue`, and equivalent routine confirmations
+
+Before any click, the autopilot must reject dialogs whose visible text mentions
+privacy, security, TCC, Screen Recording, Accessibility, App Data, administrator
+credentials, Keychain, network rules, firewall rules, Little Snitch, or their
+German equivalents. It must not click `Always Allow` unattended.
 
 Choose the narrowest visible option that works:
 
-- one domain rather than all connections
 - current app/process rather than any app
 - current-task duration unless the user asked for persistent reliability
+
+Handle Little Snitch and other firewall rule prompts as explicit operator work,
+not unattended autopilot work. A human or a task-specific operator command must
+choose the narrow rule; the autopilot must not press `Always Allow` for generic
+network dialogs.
 
 Do not use dialog automation for destructive actions, cloud/account permission
 changes, secrets, payments, CAPTCHAs, or macOS privacy/security decisions that

@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_NAME = "codex-computer-use-foundation-public"
 RELEASE_MANIFEST = "PUBLIC_RELEASE_MANIFEST.json"
 RELEASE_GENERATOR = "scripts/build-public-release.py"
-MANIFEST_SCHEMA_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 4
 IGNORABLE_EXISTING_RELEASE_FILES = {".DS_Store"}
 
 PUBLIC_EXACT = {
@@ -33,6 +33,7 @@ PUBLIC_EXACT = {
     ".github/dependabot.yml",
     ".github/FUNDING.yml",
     ".github/pull_request_template.md",
+    ".github/workflows/codeql.yml",
     ".github/workflows/ci.yml",
     ".gitattributes",
     ".gitignore",
@@ -45,6 +46,7 @@ PUBLIC_EXACT = {
     "docs/ARCHITECTURE.md",
     "docs/CURRENT-STATE.md",
     "docs/INSTALL.md",
+    "docs/releases/v0.1.8.md",
     "docs/RUNBOOK.md",
     "docs/WHAT-IS-COMPUTER-USE.md",
     "scripts/build-public-release.py",
@@ -125,6 +127,54 @@ def git_tag() -> str:
     return git_output(["describe", "--exact-match", "--tags", "HEAD"])
 
 
+def git_metadata_available() -> bool:
+    result = run(["git", "rev-parse", "--is-inside-work-tree"])
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def dirty_release_files(files: list[str], *, include_untracked: bool = False) -> list[dict[str, str]]:
+    if not files or not git_metadata_available():
+        return []
+    untracked = "normal" if include_untracked else "no"
+    result = run(["git", "status", "--porcelain=v1", f"--untracked-files={untracked}", "--", *files])
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "git status failed")
+    dirty: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        status = line[:2]
+        path = line[3:] if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path:
+            dirty.append({"status": status, "path": path})
+    return dirty
+
+
+def dirty_release_allowed(args: argparse.Namespace) -> bool:
+    return bool(args.allow_dirty or os.environ.get("CODEX_PUBLIC_RELEASE_ALLOW_DIRTY") == "1")
+
+
+def enforce_clean_release_files(
+    files: list[str],
+    *,
+    include_untracked: bool,
+    allow_dirty: bool,
+) -> list[dict[str, str]]:
+    dirty = dirty_release_files(files, include_untracked=include_untracked)
+    if dirty and not allow_dirty:
+        sample = ", ".join(f"{item['status']} {item['path']}" for item in dirty[:12])
+        suffix = "" if len(dirty) <= 12 else f", ... ({len(dirty)} total)"
+        raise RuntimeError(
+            "public release files have uncommitted changes; commit the release "
+            "content first or use --allow-dirty only for local, unpublished drills: "
+            + sample
+            + suffix
+        )
+    return dirty
+
+
 def source_repository() -> str:
     # Repository owner names can be personal handles. Keep public release
     # packages privacy-preserving by default; maintainers may opt in during a
@@ -198,7 +248,23 @@ def validate_release_name(name: str) -> None:
         raise RuntimeError(f"release name must be a single safe directory name: {name!r}")
 
 
-def copy_release(files: list[str], release_root: Path, *, dry_run: bool, allow_legacy_owned: bool) -> None:
+def output_dir_allows_legacy_owned_releases(output_dir: Path) -> bool:
+    try:
+        output_dir.resolve().relative_to((REPO_ROOT / "var").resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def copy_release(
+    files: list[str],
+    release_root: Path,
+    *,
+    dry_run: bool,
+    allow_legacy_owned: bool,
+    dirty_files: list[dict[str, str]],
+    dirty_allowed: bool,
+) -> None:
     if dry_run:
         return
     if release_root.exists():
@@ -219,6 +285,9 @@ def copy_release(files: list[str], release_root: Path, *, dry_run: bool, allow_l
         "file_sha256": file_hashes,
         "generated_by": RELEASE_GENERATOR,
         "git_commit": git_commit(),
+        "git_dirty_public_files": dirty_files,
+        "git_dirty_public_files_allowed": bool(dirty_files and dirty_allowed),
+        "git_worktree_public_files_clean": not dirty_files,
         "git_tag": git_tag(),
         "github_run_id": os.environ.get("GITHUB_RUN_ID", ""),
         "name": release_root.name,
@@ -403,6 +472,11 @@ def main() -> int:
     parser.add_argument("--tarball", default=None, help="tar.gz path; defaults beside output tree")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="allow packaging dirty public files for local unpublished drills; manifest records the dirty state",
+    )
+    parser.add_argument(
         "--include-untracked",
         action="store_true",
         help="include untracked allowlisted files; default release builds use tracked files only",
@@ -415,8 +489,7 @@ def main() -> int:
         output_dir = Path(args.output_dir).expanduser()
         if not output_dir.is_absolute():
             output_dir = REPO_ROOT / output_dir
-        default_output_dir = (REPO_ROOT / "var/public-release").resolve()
-        allow_legacy_owned = output_dir.resolve() == default_output_dir
+        allow_legacy_owned = output_dir_allows_legacy_owned_releases(output_dir)
         release_root = (output_dir / args.name).resolve()
         try:
             release_root.relative_to(output_dir.resolve())
@@ -430,7 +503,20 @@ def main() -> int:
                 tarball.relative_to(output_dir.resolve())
             except ValueError as exc:
                 raise RuntimeError(f"tarball must be inside output directory: {tarball}") from exc
-        copy_release(files, release_root, dry_run=args.dry_run, allow_legacy_owned=allow_legacy_owned)
+        dirty_allowed = dirty_release_allowed(args)
+        dirty_files = enforce_clean_release_files(
+            files,
+            include_untracked=args.include_untracked,
+            allow_dirty=dirty_allowed,
+        )
+        copy_release(
+            files,
+            release_root,
+            dry_run=args.dry_run,
+            allow_legacy_owned=allow_legacy_owned,
+            dirty_files=dirty_files,
+            dirty_allowed=dirty_allowed,
+        )
         audit_release(release_root, dry_run=args.dry_run)
         tarball_sha256, checksum_path = make_tarball(
             release_root,
@@ -452,6 +538,8 @@ def main() -> int:
                 "checksum_file": str(checksum_path),
                 "file_count": len(files),
                 "files": files,
+                "git_dirty_public_files": dirty_files,
+                "git_worktree_public_files_clean": not dirty_files,
             },
             indent=2,
             sort_keys=True,

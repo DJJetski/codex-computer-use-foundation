@@ -97,6 +97,28 @@ On some Macs one or more of those pieces drift. Common symptoms include:
 The foundation installer and guard repair those local failure modes where they
 can be repaired safely from user-owned files.
 
+## Native Tool Surface
+
+The installed Computer Use plugin exposes the native Codex Mac control surface
+as MCP tools. This project treats the complete tool list as part of health:
+
+| Tool | Native capability |
+| --- | --- |
+| `list_apps` | Discover running and available apps. |
+| `get_app_state` | Inspect the allowed target app state. |
+| `click` | Click native UI targets. |
+| `perform_secondary_action` | Use a secondary/context action where supported. |
+| `set_value` | Set a supported UI value directly. |
+| `select_text` | Select text in supported controls. |
+| `scroll` | Scroll within the target app. |
+| `drag` | Drag through the native tool path. |
+| `press_key` | Press keys and key chords. |
+| `type_text` | Type text through the native tool path. |
+
+The guard fails discovery if any of those tools are missing. The live smoke
+test then proves a safe subset through Safari because it should not perform
+destructive or broad UI actions just to prove installation health.
+
 ## What This Repo Does
 
 This repo installs source-owned repair files into `$HOME/.codex`, then validates
@@ -141,7 +163,7 @@ Then open a fresh Codex thread. If Computer Use tools are not visible, ask
 Codex to search for:
 
 ```text
-computer-use list_apps get_app_state click type_text press_key
+computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text
 ```
 
 If `mcp__computer_use__` appears, prove it with:
@@ -181,13 +203,19 @@ No. Full success means the native Computer Use MCP route works and verifies real
 GUI action evidence. Moving the user's visible pointer with `cliclick` or a
 script is not counted as native Computer Use.
 
+The guard's live native smoke may still show Codex's native second pointer
+while it proves the official route. That is different from a coordinate script:
+the proof targets Safari by bundle id through `computer-use` tools and requires
+`fallback_used=false`.
+
 ### Does this help when Codex cannot click, type, scroll, drag, or press keys on my Mac?
 
 Yes, if the failure is in native Codex Computer Use exposure or runtime health.
 The guard checks whether the Computer Use plugin is discoverable, whether
 `mcp__computer_use__` can appear in a fresh thread, whether native tools such as
-`list_apps`, `get_app_state`, `click`, `type_text`, and `press_key` exist, and
-whether native smoke proves GUI actions through the official path.
+`list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`,
+`select_text`, `scroll`, `drag`, `press_key`, and `type_text` exist, and whether
+native smoke proves GUI actions through the official path.
 
 ### What if Computer Use is installed but no MCP tools appear?
 

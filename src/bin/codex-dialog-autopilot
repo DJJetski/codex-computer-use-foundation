@@ -3,9 +3,10 @@
 
 This helper is intentionally separate from the native Computer Use MCP server.
 It is an operator safety net for routine local product dialogs, helper prompts,
-and local browser/network/firewall prompts that are already covered by the
-user's standing approval policy. It must not approve privacy, security, account,
-payment, cloud-permission, TCC, or password/security-agent prompts.
+and local browser-control prompts that are already covered by the user's
+standing approval policy. It must not approve network/firewall rule dialogs,
+privacy, security, account, payment, cloud-permission, TCC, or
+password/security-agent prompts.
 """
 
 from __future__ import annotations
@@ -118,11 +119,12 @@ def _approver_applescript() -> str:
     # processes. This deliberately excludes SecurityAgent and privacy/security
     # prompts; those require the user's normal macOS approval flow.
     return r'''
-set safeProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "Little Snitch Agent", "Little Snitch"}
-set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "Little Snitch Agent", "Little Snitch"}
-set safeNeedles to {"Codex Computer Use", "SkyComputerUse", "Google Chrome", "Chrome", "Safari", "browser", "Browser", "chatgpt.com", "Little Snitch", "network", "firewall", "incoming connections", "eingehende Verbindungen"}
-set strongButtons to {"Always Allow", "Immer erlauben", "Immer zulassen", "Allow", "Erlauben", "Zulassen", "Open", "Oeffnen", "Öffnen", "Continue", "Fortfahren"}
-set weakButtons to {"OK", "Done", "Fertig"}
+	set safeProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent"}
+	set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent"}
+	set safeNeedles to {"Codex Computer Use", "SkyComputerUse", "Google Chrome", "Chrome", "Safari", "browser", "Browser", "chatgpt.com"}
+	set denyNeedles to {"Privacy", "Security", "Privacy & Security", "System Settings", "Screen Recording", "Accessibility", "Automation", "App Data", "data from other apps", "other apps", "TCC", "administrator", "admin", "password", "credential", "keychain", "network", "firewall", "incoming connections", "outgoing connections", "Little Snitch", "Datenschutz", "Sicherheit", "Datenschutz und Sicherheit", "Systemeinstellungen", "Bildschirmaufnahme", "Bedienungshilfen", "Automation", "Automatisierung", "App-Daten", "Daten aus anderen Apps", "andere Apps", "Administrator", "Passwort", "Schluesselbund", "Schlüsselbund", "Netzwerk", "Firewall", "eingehende Verbindungen", "ausgehende Verbindungen"}
+	set strongButtons to {"Allow", "Erlauben", "Zulassen", "Open", "Oeffnen", "Öffnen", "Continue", "Fortfahren"}
+	set weakButtons to {"OK", "Done", "Fertig"}
 
 using terms from application "System Events"
 
@@ -157,7 +159,7 @@ on collectContainerText(containerRef)
 	return collectedText
 end collectContainerText
 
-on approveContainer(processName, containerRef, containerLabel, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+on approveContainer(processName, containerRef, containerLabel, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
 	set candidateButton to ""
 	set isStrongButton to false
 	repeat with buttonName in strongButtons
@@ -182,9 +184,10 @@ on approveContainer(processName, containerRef, containerLabel, safeProcessNames,
 	end if
 	if candidateButton is "" then return ""
 	set containerText to my collectContainerText(containerRef)
+	if my containsAny(containerText, denyNeedles) then return ""
 	set processIsSafe to my listContains(safeProcessNames, processName)
 	set textIsSafe to my containsAny(containerText, safeNeedles)
-	if (isStrongButton and processIsSafe and textIsSafe) or ((not isStrongButton) and textIsSafe) then
+	if processIsSafe and textIsSafe then
 		try
 			click button candidateButton of containerRef
 			return "clicked|" & (processName as text) & "|" & candidateButton & "|" & (containerLabel as text)
@@ -193,7 +196,7 @@ on approveContainer(processName, containerRef, containerLabel, safeProcessNames,
 	return ""
 end approveContainer
 
-on approveProcess(processName, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+on approveProcess(processName, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
 	tell application "System Events"
 		try
 			with timeout of 1 second
@@ -204,7 +207,7 @@ on approveProcess(processName, safeProcessNames, safeNeedles, strongButtons, wea
 							set windowLabel to (name of candidateWindow as text)
 						end try
 						if windowLabel is "" then set windowLabel to "window"
-						set approvalResult to my approveContainer(processName, candidateWindow, windowLabel, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+						set approvalResult to my approveContainer(processName, candidateWindow, windowLabel, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
 						if approvalResult is not "" then return approvalResult
 						try
 							repeat with candidateSheet in sheets of candidateWindow
@@ -212,7 +215,7 @@ on approveProcess(processName, safeProcessNames, safeNeedles, strongButtons, wea
 								try
 									set sheetLabel to windowLabel & "/" & (name of candidateSheet as text)
 								end try
-								set approvalResult to my approveContainer(processName, candidateSheet, sheetLabel, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+								set approvalResult to my approveContainer(processName, candidateSheet, sheetLabel, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
 								if approvalResult is not "" then return approvalResult
 							end repeat
 						end try
@@ -239,14 +242,14 @@ tell application "System Events"
 	end try
 end tell
 
-if frontProcessName is not "" then
-	set approvalResult to my approveProcess(frontProcessName, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+if frontProcessName is not "" and my listContains(safeProcessNames, frontProcessName) then
+	set approvalResult to my approveProcess(frontProcessName, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
 	if approvalResult is not "" then return approvalResult
 end if
 
 repeat with processName in scanProcessNames
 	if ((processName as text) is not frontProcessName) and my listContains(liveProcessNames, processName as text) then
-		set approvalResult to my approveProcess(processName as text, safeProcessNames, safeNeedles, strongButtons, weakButtons)
+		set approvalResult to my approveProcess(processName as text, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
 		if approvalResult is not "" then return approvalResult
 	end if
 end repeat

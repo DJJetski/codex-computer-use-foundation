@@ -74,6 +74,22 @@ PUBLIC_ACCOUNT_MARKERS = {
     "DJJetski",
     "DJ Jetski",
 }
+EXPECTED_NATIVE_MCP_TOOLS = (
+    "list_apps",
+    "get_app_state",
+    "click",
+    "perform_secondary_action",
+    "set_value",
+    "select_text",
+    "scroll",
+    "drag",
+    "press_key",
+    "type_text",
+)
+EXPECTED_TOOL_SEARCH_QUERY = (
+    "computer-use list_apps get_app_state click perform_secondary_action "
+    "set_value select_text scroll drag press_key type_text"
+)
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -212,6 +228,64 @@ def scan_local_workspace_artifacts() -> list[str]:
     return findings
 
 
+def scan_native_contract_consistency() -> list[str]:
+    findings: list[str] = []
+    guard = REPO_ROOT / "src/bin/codex-computer-use-guard"
+    verifier = REPO_ROOT / "scripts/verify-live-state.py"
+    docs = [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs/WHAT-IS-COMPUTER-USE.md",
+        REPO_ROOT / "docs/ARCHITECTURE.md",
+        REPO_ROOT / "src/skills/macos-computer-use/SKILL.md",
+    ]
+    for path in [guard, verifier, *docs]:
+        text = path.read_text(encoding="utf-8")
+        missing = [tool for tool in EXPECTED_NATIVE_MCP_TOOLS if tool not in text]
+        if missing:
+            findings.append(f"native tool contract missing from {path.relative_to(REPO_ROOT)}: {', '.join(missing)}")
+    for path in [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs/WHAT-IS-COMPUTER-USE.md",
+        REPO_ROOT / "docs/RUNBOOK.md",
+        REPO_ROOT / "docs/CURRENT-STATE.md",
+        REPO_ROOT / "src/skills/macos-computer-use/SKILL.md",
+    ]:
+        text = path.read_text(encoding="utf-8")
+        if EXPECTED_TOOL_SEARCH_QUERY not in text:
+            findings.append(f"fresh-thread tool_search query is not the full native surface: {path.relative_to(REPO_ROOT)}")
+    guard_text = guard.read_text(encoding="utf-8")
+    verifier_text = verifier.read_text(encoding="utf-8")
+    if "mcp_tool_surface" not in guard_text:
+        findings.append("guard status does not record native MCP tool-surface status")
+    if "mcp_tool_surface" not in verifier_text:
+        findings.append("live verifier does not require native MCP tool-surface status")
+    for path in [REPO_ROOT / "README.md", REPO_ROOT / "docs/WHAT-IS-COMPUTER-USE.md"]:
+        text = path.read_text(encoding="utf-8")
+        if "fallback_used=false" not in text:
+            findings.append(f"public docs do not state fallback_used=false boundary: {path.relative_to(REPO_ROOT)}")
+    return findings
+
+
+def scan_release_provenance_contract() -> list[str]:
+    findings: list[str] = []
+    builder = REPO_ROOT / "scripts/build-public-release.py"
+    drill = REPO_ROOT / "scripts/release-drill.py"
+    builder_text = builder.read_text(encoding="utf-8")
+    drill_text = drill.read_text(encoding="utf-8")
+    required_builder_terms = [
+        "enforce_clean_release_files",
+        "git_dirty_public_files",
+        "git_worktree_public_files_clean",
+        "--allow-dirty",
+    ]
+    for term in required_builder_terms:
+        if term not in builder_text:
+            findings.append(f"release builder provenance contract missing {term}")
+    if "--allow-dirty" not in drill_text:
+        findings.append("release drill cannot explicitly mark dirty local drill builds")
+    return findings
+
+
 def scan_commit_identities(refspec: str) -> list[str]:
     if not repo_has_own_git_metadata():
         return []
@@ -261,10 +335,20 @@ def scan_history_content(refs: list[str], markers: list[str]) -> list[str]:
         result = run(["git", "grep", "-I", "-n", "-i", "-F", marker, *refs, "--", "."], check=False)
         if result.returncode == 0:
             first = result.stdout.splitlines()[0] if result.stdout else marker
-            findings.append(f"personal marker in git history: {first}")
+            findings.append(f"personal marker in git history: {history_match_location(first)}")
         elif result.returncode not in {1, 128}:
-            findings.append(f"git grep failed for marker {marker!r}: {result.stderr.strip()}")
+            findings.append(f"git grep failed for personal marker scan: {result.stderr.strip()}")
     return findings
+
+
+def history_match_location(line: str) -> str:
+    parts = line.split(":", 3)
+    if len(parts) != 4:
+        return "<redacted-location>"
+    ref, path, line_no, _content = parts
+    if not line_no.isdigit():
+        return f"{ref[:12]}:<redacted-location>"
+    return f"{ref[:12]}:{path}:{line_no}"
 
 
 def git_grep_regex(pattern: str, refs: list[str], *, ignore_case: bool = False) -> subprocess.CompletedProcess[str]:
@@ -287,7 +371,7 @@ def scan_history_emails(refs: list[str]) -> list[str]:
     for line in result.stdout.splitlines():
         for email in EMAIL_RE.findall(line):
             if email.lower() not in {item.lower() for item in ALLOWED_EMAILS}:
-                findings.append(f"non-public email in git history: {line[:500]}")
+                findings.append(f"non-public email in git history: {history_match_location(line)}")
                 break
     return findings
 
@@ -303,8 +387,8 @@ def scan_history_secrets(refs: list[str]) -> list[str]:
         if result.returncode != 0:
             findings.append(f"git grep failed for historic secret pattern: {result.stderr.strip()}")
             continue
-        first = result.stdout.splitlines()[0] if result.stdout else pattern
-        findings.append(f"possible secret in git history: {first[:500]}")
+        first = result.stdout.splitlines()[0] if result.stdout else ""
+        findings.append(f"possible secret in git history: {history_match_location(first)}")
     return findings
 
 
@@ -333,6 +417,8 @@ def main() -> int:
             findings.extend(scan_file(path, markers))
     if args.enforce_public_surface or (REPO_ROOT / PUBLIC_RELEASE_MANIFEST).is_file():
         findings.extend(scan_public_surface(files))
+    findings.extend(scan_native_contract_consistency())
+    findings.extend(scan_release_provenance_contract())
     findings.extend(scan_local_workspace_artifacts())
     if not args.skip_commit_identities:
         findings.extend(scan_commit_identities(refspec))

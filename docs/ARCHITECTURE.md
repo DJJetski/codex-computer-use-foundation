@@ -19,6 +19,14 @@ control in Codex. It is exposed as MCP tools, keeps the native
 `SkyComputerUseClient mcp` process connected to the Codex AppServer rendezvous,
 and can produce structured health evidence from real native tool calls.
 
+Official Codex Computer Use setup is still the baseline: install the bundled
+Computer Use plugin in Codex, grant normal macOS Screen Recording and
+Accessibility permissions, allow target apps in Codex when prompted, and keep
+sensitive or disruptive actions under user review. This repair layer does not
+replace that model. It repairs the local native route when it drifts, preserves
+OpenAI's native client boundary, and fails closed instead of silently using a
+fallback.
+
 This is materially different from fallback automation:
 
 - `cliclick` and similar pointer tools move the visible pointer and depend on
@@ -62,7 +70,7 @@ flowchart TD
   F --> G["fast guard ensure-config"]
   G --> H["exec SkyComputerUseClient mcp"]
   H --> I["Codex AppServer / AppleEvent / Mach rendezvous"]
-  I --> J["native tools: list_apps, get_app_state, click, type_text, press_key"]
+  I --> J["complete native MCP tool surface"]
   J --> K["fresh native smoke record"]
   K --> L["guard status ok=true"]
 ```
@@ -186,11 +194,13 @@ Files:
 Responsibilities:
 
 - Accept only narrow allowlisted local dialogs that match routine
-  Codex/browser/helper/network/firewall prompts. Strong buttons such as
+  Codex/browser/helper prompts. Strong buttons such as
   allow/open/continue require both an allowlisted helper process and
   allowlisted dialog text; process name alone is not enough.
-- Exclude privacy, security, account, cloud-permission, payment, TCC, password,
-  and SecurityAgent prompts from unattended approval.
+- Reject denylisted dialog text before any click, even when the process name
+  and app text look otherwise routine.
+- Exclude network/firewall rules, privacy, security, account, cloud-permission,
+  payment, TCC, password, and SecurityAgent prompts from unattended approval.
 - Keep these prompts from blocking future reinstall or first-run flows after
   the one-time macOS Accessibility/Automation permission exists.
 - Stay outside the native Computer Use MCP path. This layer is not used to
@@ -217,7 +227,10 @@ Responsibilities:
 `configured=true` means config, plugin enablement, marketplace routing, cache,
 and direct-alias absence are healthy.
 
-`discoverable=true` means the native launcher reports the expected MCP tools.
+`discoverable=true` means the native launcher reports the complete expected MCP
+tool surface: `list_apps`, `get_app_state`, `click`,
+`perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`,
+`press_key`, and `type_text`.
 
 `runtime_ready=true` means patched runtime/client/service readiness checks pass.
 
@@ -230,10 +243,19 @@ showed real MCP rendezvous.
 not just app listing.
 
 The smoke drives a local Safari-only test page with a button and text input.
-It requires native `click` and `type_text` evidence, confirms the local page
-received both events, closes its own smoke tab where the native server allows
-it, and removes stale `codex-cu-native-smoke-*.txt` temp files from older
-releases.
+It opens that page in the background with `open -g`, targets Safari by bundle
+id instead of relying on the frontmost app, requires native `click` and
+`type_text` evidence, confirms the local page received both events, closes its
+own smoke tab where the native server allows it, and removes stale
+`codex-cu-native-smoke-*.txt` temp files from older releases. Because it is a
+real native GUI proof, the native second pointer may still be visible during
+the short smoke run.
+
+The smoke is intentionally a safe behavioral subset. It does not drag arbitrary
+UI, scroll unknown app content, or set values in user apps just to prove install
+health. Full tool-surface parity is checked with native `tools/list`; the smoke
+then proves that the official route can perform safe real GUI actions without
+fallback automation.
 
 Duplicate native MCP clients under one Codex AppServer parent are fail-closed
 health evidence. The guard cleans orphaned clients automatically. Full

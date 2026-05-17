@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Private vulnerability report
-    url: https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability
+    url: https://github.com/DJJetski/codex-computer-use-foundation/security/advisories/new
     about: Use this repository's private vulnerability reporting flow or security policy for vulnerabilities, token exposure, private data exposure, or bypass concerns.
   - name: Security policy
-    url: https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository
+    url: https://github.com/DJJetski/codex-computer-use-foundation/security/policy
     about: Read what to redact before sharing logs or local runtime details.

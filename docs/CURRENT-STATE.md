@@ -149,7 +149,7 @@ computer-use
   readiness exists.
 - Fresh-thread absence of `mcp__computer_use__` is not automatically failure.
   First call `tool_search` for
-  `computer-use list_apps get_app_state click type_text press_key`.
+  `computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text`.
 - If `tool_search` exposes the namespace, prove native health with
   `mcp__computer_use__.list_apps`.
 - If tools remain absent after `tool_search`, run
@@ -159,10 +159,12 @@ computer-use
 - No AppleScript, Accessibility scripting, screenshots, `cliclick`, Keyboard
   Maestro, Playwright, or VPN may be hidden inside the Computer Use MCP path.
 - `codex-dialog-autopilot` is a separate routine-dialog operator layer. It may
-  keep narrowly matched helper/AppData/browser/firewall prompts from blocking
-  first-use flows, but it is not native Computer Use and is not evidence for
-  `ok=true`. Strong button clicks require both an allowlisted helper process
-  and allowlisted dialog text.
+  keep narrowly matched helper/AppData/browser prompts from blocking first-use
+  flows, but it is not native Computer Use and is not evidence for `ok=true`.
+  Strong button clicks require both an allowlisted helper process and
+  allowlisted dialog text. Firewall and network rule prompts remain explicit
+  operator decisions. Denylisted privacy/security/TCC/network/firewall text
+  wins over otherwise safe app names, and unattended `Always Allow` is disabled.
 - VPN is separate. Do not connect VPN just to use Computer Use.
 - Target OpenAI Codex as `/Applications/Codex.app` or `com.openai.codex`; never
   as plain `Codex` or `CODEX`.

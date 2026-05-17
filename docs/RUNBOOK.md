@@ -15,7 +15,7 @@ If you need the non-operator explanation first, read
 2. If `mcp__computer_use__` is not visible, call `tool_search` for:
 
    ```text
-   computer-use list_apps get_app_state click type_text press_key
+   computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text
    ```
 
 3. If the namespace appears, immediately prove native operation:
@@ -50,7 +50,10 @@ thread before native operation is proven.
 If the only failure is `failure_class=stale_native_smoke`, run full `ensure`.
 That is the intended fail-closed refresh path.
 
-## Source Repo Verification
+## Maintainer / Source Checkout Verification
+
+Normal users can skip this section unless they are working from a source
+checkout and want to validate the repository itself.
 
 From the source repo:
 
@@ -144,6 +147,18 @@ Expected:
 - plist is valid
 - launchd job exists
 - recent exits are successful
+
+If the LaunchAgent plist or bootstrap files were deleted, reinstall the
+foundation runtime from the repo checkout or downloaded package:
+
+```bash
+scripts/install.py --yes --full-ensure
+```
+
+On success, that recreates the LaunchAgent, bootstrap backups, marketplace
+mirror, plugin shim, and fresh native smoke evidence. `ensure-config` can
+restore structural files, but structural repair alone is not native success;
+full success still requires a fresh native smoke run with `fallback_used=false`.
 
 ## Native MCP Process Cleanup
 

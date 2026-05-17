@@ -104,16 +104,58 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("codex-dialog-autopilot", text)
         self.assertNotIn("SkyComputerUseClient mcp", text)
         self.assertNotIn("mcpServers", text)
-        safe_process_line = next(line for line in text.splitlines() if line.startswith("set safeProcessNames"))
-        for broad_app in ["Google Chrome", "Safari", "Terminal", "iTerm2", "Keyboard Maestro", "SecurityAgent", "securityagent"]:
+        safe_process_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set safeProcessNames"))
+        for broad_app in [
+            "Google Chrome",
+            "Safari",
+            "Terminal",
+            "iTerm2",
+            "Keyboard Maestro",
+            "SecurityAgent",
+            "securityagent",
+            "Little Snitch",
+        ]:
             self.assertNotIn(broad_app, safe_process_line)
-        safe_needles_line = next(line for line in text.splitlines() if line.startswith("set safeNeedles"))
-        for privacy_needle in ["Datenschutz und Sicherheit", "Daten aus anderen Apps", "App-Daten", "control", "steuern"]:
+        safe_needles_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set safeNeedles"))
+        for privacy_needle in [
+            "Datenschutz und Sicherheit",
+            "Daten aus anderen Apps",
+            "App-Daten",
+            "control",
+            "steuern",
+            "Little Snitch",
+            "network",
+            "firewall",
+            "incoming connections",
+            "eingehende Verbindungen",
+        ]:
             self.assertNotIn(privacy_needle, safe_needles_line)
-        strong_buttons_line = next(line for line in text.splitlines() if line.startswith("set strongButtons"))
+        deny_needles_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set denyNeedles"))
+        for deny_needle in [
+            "Privacy",
+            "Security",
+            "Screen Recording",
+            "Accessibility",
+            "TCC",
+            "network",
+            "firewall",
+            "Little Snitch",
+            "Datenschutz und Sicherheit",
+            "Daten aus anderen Apps",
+            "Netzwerk",
+            "Firewall",
+        ]:
+            self.assertIn(deny_needle, deny_needles_line)
+        strong_buttons_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set strongButtons"))
+        self.assertNotIn("Always Allow", strong_buttons_line)
+        self.assertNotIn("Immer erlauben", strong_buttons_line)
+        self.assertNotIn("Immer zulassen", strong_buttons_line)
         self.assertNotIn("Trust", strong_buttons_line)
         self.assertNotIn("Vertrauen", strong_buttons_line)
-        self.assertIn("isStrongButton and processIsSafe and textIsSafe", text)
+        self.assertIn("if my containsAny(containerText, denyNeedles) then return \"\"", text)
+        self.assertIn("if processIsSafe and textIsSafe then", text)
+        self.assertIn("frontProcessName is not \"\" and my listContains(safeProcessNames, frontProcessName)", text)
+        self.assertNotIn("((not isStrongButton) and textIsSafe)", text)
         self.assertNotIn("isStrongButton and (processIsSafe or textIsSafe)", text)
 
     def test_guard_generates_portable_shell_wrappers(self) -> None:
@@ -138,14 +180,144 @@ class FoundationTests(unittest.TestCase):
         self.assertIn('"post_smoke_mcp_cleanup": post_smoke_mcp_cleanup', guard)
         self.assertNotIn("${{", guard)
 
+    def test_guard_status_mcp_probes_skip_launcher_repair(self) -> None:
+        guard = load_guard_module()
+        calls: list[str | None] = []
+
+        def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            calls.append((kwargs.get("env") or {}).get("CODEX_CU_LAUNCHER_SKIP_GUARD"))
+            if cmd[-1:] == ["--help"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if "tools/call" in str(kwargs.get("input", "")):
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "result": {"content": [{"type": "text", "text": "Apps\n[{\"name\":\"Safari\"}]"}]},
+                        }
+                    )
+                    + "\n",
+                    "",
+                )
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {
+                            "tools": [
+                                {"name": name}
+                                for name in guard.EXPECTED_NATIVE_MCP_TOOLS
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+                "",
+            )
+
+        old_run = guard.subprocess.run
+        try:
+            guard.subprocess.run = fake_run
+            with tempfile.TemporaryDirectory() as tmp:
+                binary = Path(tmp) / "codex-computer-use-native-launcher"
+                binary.write_text("#!/bin/sh\n", encoding="utf-8")
+                binary.chmod(0o700)
+                ok, _tools, error = guard._mcp_tools_probe(binary)
+                self.assertTrue(ok, error)
+                ok, count, error = guard._mcp_tool_call_probe(binary, "list_apps", {}, timeout=15)
+                self.assertTrue(ok, error)
+                self.assertEqual(count, 1)
+                wrapper_root = Path(tmp) / "plugin"
+                wrapper_root.mkdir()
+                wrapper = wrapper_root / "codex-computer-use-mcp"
+                wrapper.write_text("#!/bin/sh\n", encoding="utf-8")
+                wrapper.chmod(0o700)
+                ok, error = guard._plugin_local_mcp_wrapper_runtime_probe(wrapper_root)
+                self.assertTrue(ok, error)
+        finally:
+            guard.subprocess.run = old_run
+
+        self.assertTrue(calls)
+        self.assertTrue(all(value == "1" for value in calls), calls)
+
+    def test_mcp_tools_probe_requires_full_native_tool_surface(self) -> None:
+        guard = load_guard_module()
+
+        def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            tools = [
+                {"name": name}
+                for name in guard.EXPECTED_NATIVE_MCP_TOOLS
+                if name != "drag"
+            ]
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + "\n",
+                "",
+            )
+
+        old_run = guard.subprocess.run
+        try:
+            guard.subprocess.run = fake_run
+            with tempfile.TemporaryDirectory() as tmp:
+                binary = Path(tmp) / "codex-computer-use-native-launcher"
+                binary.write_text("#!/bin/sh\n", encoding="utf-8")
+                binary.chmod(0o700)
+                ok, tools, error = guard._mcp_tools_probe(binary)
+        finally:
+            guard.subprocess.run = old_run
+
+        self.assertFalse(ok)
+        self.assertNotIn("drag", tools)
+        self.assertIn("missing expected tools: drag", error)
+
+    def test_mcp_tools_probe_rejects_nonzero_exit_even_with_full_tool_surface(self) -> None:
+        guard = load_guard_module()
+
+        def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            tools = [{"name": name} for name in guard.EXPECTED_NATIVE_MCP_TOOLS]
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + "\n",
+                "",
+            )
+
+        old_run = guard.subprocess.run
+        try:
+            guard.subprocess.run = fake_run
+            with tempfile.TemporaryDirectory() as tmp:
+                binary = Path(tmp) / "codex-computer-use-native-launcher"
+                binary.write_text("#!/bin/sh\n", encoding="utf-8")
+                binary.chmod(0o700)
+                ok, tools, error = guard._mcp_tools_probe(binary)
+        finally:
+            guard.subprocess.run = old_run
+
+        self.assertFalse(ok)
+        self.assertEqual(set(tools), set(guard.EXPECTED_NATIVE_MCP_TOOLS))
+        self.assertIn("native MCP probe exited with 1", error)
+
     def test_ensure_config_repairs_persistence_layer(self) -> None:
         guard = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
         ensure_config_branch = guard[guard.index('elif command in {"ensure-config", "repair-config"}') :]
         self.assertIn("launch_agent_changed, launch_agent_loaded = ensure_launch_agent()", ensure_config_branch)
+        self.assertIn("dialog_autopilot = ensure_dialog_autopilot()", ensure_config_branch)
         self.assertIn('"launch_agent_loaded": launch_agent_loaded', ensure_config_branch)
+        self.assertIn('"dialog_autopilot": dialog_autopilot', ensure_config_branch)
         self.assertIn('"bootstrap_exists": BOOTSTRAP.is_file()', ensure_config_branch)
         self.assertIn('"guard_backup_exists": GUARD_BACKUP.is_file()', ensure_config_branch)
         self.assertIn('"operational_state": operational_state', ensure_config_branch)
+        self.assertIn('"ok": False', ensure_config_branch)
+        self.assertIn('"structural_only": True', ensure_config_branch)
+        self.assertIn("discoverable=False", ensure_config_branch)
+        self.assertIn("runtime_ready=False", ensure_config_branch)
         self.assertIn('"codex_app_path_state": str(CODEX_APP_PATH_STATE)', ensure_config_branch)
 
     def test_operational_state_marks_structural_ok_stale_smoke(self) -> None:
@@ -416,6 +588,8 @@ class FoundationTests(unittest.TestCase):
 
         self.assertIn("Native Smoke Input", smoke_body)
         self.assertIn("Call computer-use/type_text with app com.apple.Safari", smoke_body)
+        self.assertIn('["/usr/bin/open", "-g", "-a", "Safari", click_url]', guard_source)
+        self.assertIn("Safari may not be the frontmost app", smoke_body)
         self.assertNotIn("com.apple.TextEdit", smoke_body)
         self.assertNotIn("super+s", smoke_body)
 
@@ -490,8 +664,8 @@ class FoundationTests(unittest.TestCase):
     def test_github_issue_config_disables_blank_security_bypass(self) -> None:
         issue_config = repo_path(".github/ISSUE_TEMPLATE/config.yml").read_text(encoding="utf-8")
         self.assertIn("blank_issues_enabled: false", issue_config)
-        self.assertIn("privately-reporting-a-security-vulnerability", issue_config)
-        self.assertIn("adding-a-security-policy", issue_config)
+        self.assertIn("/security/advisories/new", issue_config)
+        self.assertIn("/security/policy", issue_config)
 
     def test_guard_suppresses_plugin_skill_publication(self) -> None:
         module = load_guard_module()
@@ -649,6 +823,15 @@ class FoundationTests(unittest.TestCase):
                 "operational": True,
                 "second_mouse_verified": True,
             },
+            "mcp_tools_ok": True,
+            "mcp_tools": list(verifier.EXPECTED_NATIVE_MCP_TOOLS),
+            "mcp_tool_surface": {
+                "ok": True,
+                "expected": list(verifier.EXPECTED_NATIVE_MCP_TOOLS),
+                "observed": list(verifier.EXPECTED_NATIVE_MCP_TOOLS),
+                "missing": [],
+                "unexpected": [],
+            },
             "native_smoke": {
                 "ok": True,
                 "fresh": True,
@@ -673,11 +856,29 @@ class FoundationTests(unittest.TestCase):
         checks = verifier.guard_status_payload_checks(payload, require_operational=True)
         self.assertTrue(all(item["ok"] for item in checks), checks)
 
-        weak_payload = json.loads(json.dumps(payload))
-        weak_payload["native_smoke"]["safari_input_verified"] = False
-        checks = verifier.guard_status_payload_checks(weak_payload, require_operational=True)
+        for key, check_name in [
+            ("safari_input_verified", "native smoke Safari input verified"),
+            ("safari_click_received", "native smoke Safari click received"),
+            ("safari_type_received", "native smoke Safari type received"),
+            ("cleanup_keypress_ok", "native smoke cleanup keypress ok"),
+            ("fallback_used", "native smoke fallback_used=false"),
+        ]:
+            with self.subTest(key=key):
+                weak_payload = json.loads(json.dumps(payload))
+                weak_payload["native_smoke"][key] = True if key == "fallback_used" else False
+                checks = verifier.guard_status_payload_checks(weak_payload, require_operational=True)
+                failed = [item["name"] for item in checks if not item["ok"]]
+                self.assertIn(check_name, failed)
+
+        missing_tool_payload = json.loads(json.dumps(payload))
+        missing_tool_payload["mcp_tools"].remove("drag")
+        missing_tool_payload["mcp_tool_surface"]["ok"] = False
+        missing_tool_payload["mcp_tool_surface"]["observed"].remove("drag")
+        missing_tool_payload["mcp_tool_surface"]["missing"] = ["drag"]
+        checks = verifier.guard_status_payload_checks(missing_tool_payload, require_operational=True)
         failed = [item["name"] for item in checks if not item["ok"]]
-        self.assertIn("native smoke Safari input verified", failed)
+        self.assertIn("native MCP full tool surface present", failed)
+        self.assertIn("native MCP tool surface status ok=true", failed)
 
     def test_installer_scrubs_direct_aliases_and_foundation_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -869,8 +1070,10 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue((package / "LICENSE").is_file())
             self.assertTrue((package / "SECURITY.md").is_file())
             self.assertTrue((package / "docs/WHAT-IS-COMPUTER-USE.md").is_file())
+            self.assertTrue((package / "docs/releases/v0.1.8.md").is_file())
             self.assertTrue((package / ".github/FUNDING.yml").is_file())
             self.assertTrue((package / ".github/workflows/ci.yml").is_file())
+            self.assertTrue((package / ".github/workflows/codeql.yml").is_file())
             self.assertFalse((package / "docs/internal").exists())
             self.assertFalse((package / "src/skills/macos-computer-use/references").exists())
             home = tmp_path / "home"
@@ -970,8 +1173,11 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue(checksum_file.is_file())
             self.assertIn(digest, checksum_file.read_text(encoding="utf-8"))
             manifest = json.loads((tmp_path / "release" / "public" / "PUBLIC_RELEASE_MANIFEST.json").read_text(encoding="utf-8"))
-            self.assertEqual(manifest["schema_version"], 3)
+            self.assertEqual(manifest["schema_version"], 4)
             self.assertIn("git_commit", manifest)
+            self.assertIn("git_dirty_public_files", manifest)
+            self.assertIn("git_dirty_public_files_allowed", manifest)
+            self.assertIn("git_worktree_public_files_clean", manifest)
             self.assertIn("git_tag", manifest)
             self.assertIn("github_run_id", manifest)
             self.assertIn("source_repository", manifest)
@@ -1036,6 +1242,26 @@ class FoundationTests(unittest.TestCase):
 
         self.assertEqual(calls[0], ["git", "ls-files", "--cached"])
         self.assertEqual(calls[1], ["git", "ls-files", "--cached", "--others", "--exclude-standard"])
+
+    def test_build_public_release_refuses_dirty_public_files_by_default(self) -> None:
+        module = load_script_module("build_public_release_dirty_files_test", "scripts/build-public-release.py")
+        old_dirty_release_files = module.dirty_release_files
+        try:
+            module.dirty_release_files = lambda files, include_untracked=False: [
+                {"status": " M", "path": "README.md"}
+            ]
+            with self.assertRaisesRegex(RuntimeError, "public release files have uncommitted changes"):
+                module.enforce_clean_release_files(["README.md"], include_untracked=False, allow_dirty=False)
+            dirty = module.enforce_clean_release_files(["README.md"], include_untracked=False, allow_dirty=True)
+            self.assertEqual(dirty, [{"status": " M", "path": "README.md"}])
+        finally:
+            module.dirty_release_files = old_dirty_release_files
+
+    def test_build_public_release_allows_legacy_owned_dirs_only_under_var(self) -> None:
+        module = load_script_module("build_public_release_legacy_owned_test", "scripts/build-public-release.py")
+        self.assertTrue(module.output_dir_allows_legacy_owned_releases(REPO_ROOT / "var/public-release-drill"))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(module.output_dir_allows_legacy_owned_releases(Path(tmp) / "release"))
 
     def test_release_drill_exercises_extracted_tarball_from_clean_temp_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2042,6 +2268,16 @@ class FoundationTests(unittest.TestCase):
         findings = module.scan_local_workspace_artifacts()
         self.assertEqual(findings, [])
 
+    def test_public_release_audit_enforces_native_contract_consistency(self) -> None:
+        module = load_script_module("public_release_audit_contract_test", "scripts/public-release-audit.py")
+        findings = module.scan_native_contract_consistency()
+        self.assertEqual(findings, [])
+
+    def test_public_release_audit_enforces_release_provenance_contract(self) -> None:
+        module = load_script_module("public_release_audit_provenance_test", "scripts/public-release-audit.py")
+        findings = module.scan_release_provenance_contract()
+        self.assertEqual(findings, [])
+
     def test_public_release_audit_scans_history_for_email_and_secret_patterns(self) -> None:
         module_path = SCRIPTS / "public-release-audit.py"
         loader = importlib.machinery.SourceFileLoader("public_release_audit_history_under_test", str(module_path))
@@ -2063,11 +2299,37 @@ class FoundationTests(unittest.TestCase):
             )
 
         old_grep = module.git_grep_regex
+        old_run = module.run
         try:
+            self.assertEqual(
+                module.history_match_location(f"abc123:README.md:1:contact {private_email} at 10:30:"),
+                "abc123:README.md:1",
+            )
+            self.assertEqual(
+                module.history_match_location("abc123:path:with:colon:1:token ghp_secret:42:"),
+                "abc123:<redacted-location>",
+            )
+            marker = "Private Maintainer Name"
+
+            def fake_run(cmd: list[str], *, check: bool = False) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    f"abc123:README.md:3:owner {marker}\n",
+                    "",
+                )
+
+            module.run = fake_run
+            marker_findings = module.scan_history_content(["HEAD"], [marker])
+            self.assertEqual(len(marker_findings), 1, marker_findings)
+            self.assertNotIn(marker, marker_findings[0])
+            self.assertIn("abc123:README.md:3", marker_findings[0])
+
             module.git_grep_regex = fake_email_grep
             email_findings = module.scan_history_emails(["HEAD"])
             self.assertEqual(len(email_findings), 1, email_findings)
-            self.assertIn(private_email, email_findings[0])
+            self.assertNotIn(private_email, email_findings[0])
+            self.assertIn("abc123:README.md:1", email_findings[0])
 
             def fake_secret_grep(pattern: str, refs: list[str], *, ignore_case: bool = False) -> subprocess.CompletedProcess[str]:
                 if "gh[pousr]" in pattern:
@@ -2079,8 +2341,11 @@ class FoundationTests(unittest.TestCase):
             secret_findings = module.scan_history_secrets(["HEAD"])
             self.assertEqual(len(secret_findings), 1, secret_findings)
             self.assertIn("possible secret in git history", secret_findings[0])
+            self.assertNotIn("ghp_", secret_findings[0])
+            self.assertIn("abc123:foo:1", secret_findings[0])
         finally:
             module.git_grep_regex = old_grep
+            module.run = old_run
 
     def test_public_release_audit_ignores_generic_ci_account_markers(self) -> None:
         module_path = SCRIPTS / "public-release-audit.py"

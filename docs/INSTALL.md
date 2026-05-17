@@ -46,13 +46,18 @@ native smoke when the guard decides refresh is needed:
 scripts/install.py --yes --full-ensure
 ```
 
+The full native smoke opens a local Safari test page in the background and
+targets Safari by bundle id. It may still show the native Computer Use second
+pointer while it proves click and type operations. Run this verification when a
+short local GUI test is acceptable.
+
 ## Install On Another Mac
 
 Prerequisites:
 
 - macOS
 - Python 3 available as `python3`
-- OpenAI Codex installed at `/Applications/Codex.app`
+- OpenAI Codex installed, normally at `/Applications/Codex.app`
 - Codex has been opened at least once so `$HOME/.codex` exists. If it has not,
   open Codex once, close it, then run the installer.
 - Apple command-line tools may be required on macOS/Codex combinations that
@@ -72,6 +77,10 @@ scripts/install.py --yes --full-ensure
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
 ```
 
+The `--full-ensure` and `--require-operational` steps are live GUI
+verification. They are intentionally stricter than structural install and may
+show the native second pointer during the temporary Safari smoke page.
+
 On slow first-run machines or machines waiting on normal Codex/macOS helper
 startup, extend postinstall timeouts instead of rerunning half-completed
 commands:
@@ -87,7 +96,7 @@ before running the guard.
 After installation, open a fresh Codex thread and use the native fresh-thread
 procedure in `docs/RUNBOOK.md`.
 
-## Install From The Latest Download
+## Install From The Latest GitHub Download
 
 Download the latest published source tarball and its `.sha256` sidecar:
 
@@ -106,20 +115,7 @@ scripts/install.py --yes --full-ensure
 ```
 
 Codex can follow the same steps when given the download URL. The package
-contains all installer source files; it must not depend on this private working
-tree.
-
-For a local proof of that flow from a generated tarball:
-
-```bash
-scripts/release-drill.py
-```
-
-For a downloaded tarball, use the published SHA256:
-
-```bash
-scripts/release-drill.py --tarball /tmp/codex-computer-use-foundation-public.tar.gz --expected-sha256 <published-sha256>
-```
+contains the installer source files needed for a normal user install.
 
 ## What The Installer Does
 
@@ -232,8 +228,10 @@ or unrelated `$HOME/.codex` settings.
   LaunchAgent repair and plugin launches use the same validated Codex app.
 - `codex-dialog-autopilot` is source-owned and manifest-installed, but it is
   not part of the native Computer Use MCP path and is not a native operational
-  health gate. It exists only for narrow local allow/OK/helper/firewall/AppData
-  prompts.
+  health gate. It exists only for narrow local allow/OK/helper/AppData prompts;
+  privacy/security/TCC/network/firewall deny text is checked before any click,
+  unattended `Always Allow` is disabled, and firewall/network rule dialogs
+  remain explicit operator decisions.
 
 ## Verify
 

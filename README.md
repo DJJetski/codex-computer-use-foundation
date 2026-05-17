@@ -21,8 +21,7 @@ official native OpenAI Codex Computer Use path.
 
 Use it when Codex is installed, but native Computer Use does not appear in a
 fresh thread, `mcp__computer_use__` is missing, Computer Use tools time out, or
-Codex cannot control Mac apps through native tools such as `list_apps`,
-`get_app_state`, `click`, `type_text`, `press_key`, `scroll`, or `drag`.
+Codex cannot control Mac apps through the native tool surface listed below.
 
 This can help both machines where Computer Use worked before and machines where
 native Computer Use has never worked after installing Codex.
@@ -30,9 +29,9 @@ native Computer Use has never worked after installing Codex.
 ## Why Native Computer Use Matters
 
 Native Computer Use is not just a visible mouse script. When it works, Codex can
-discover apps, inspect app state, and call native tools such as `list_apps`,
-`get_app_state`, `click`, `type_text`, `press_key`, `scroll`, and `drag`
-through the official Computer Use MCP path.
+discover apps, inspect app state, click, type, press keys, scroll, drag, set UI
+values, select text, and use secondary actions through the official Computer Use
+MCP path.
 
 Fallbacks such as Haindy, `cliclick`, AppleScript, Accessibility scripting,
 Keyboard Maestro, screenshots, and Playwright can be useful when a user
@@ -50,6 +49,8 @@ native evidence and `fallback_used=false`.
 Requirements:
 
 - macOS with Python 3 available as `python3`
+- `git` for the clone command, or use the latest GitHub download path in
+  [`docs/INSTALL.md`](docs/INSTALL.md)
 - OpenAI Codex installed and opened at least once
 - Codex normally at `/Applications/Codex.app`, or a path you can pass with
   `--codex-app`
@@ -62,6 +63,11 @@ scripts/install.py --dry-run
 scripts/install.py --yes --full-ensure
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
 ```
+
+`--full-ensure` runs a live native smoke test. It opens a local Safari test
+page in the background and targets Safari by bundle id, but it can still show
+Codex's native second pointer while it proves click and type operations. Run it
+when a short local GUI verification is acceptable.
 
 If Codex is not installed at `/Applications/Codex.app`, pass the app path once:
 
@@ -81,6 +87,8 @@ People usually find this project while searching for:
 - `mcp__computer_use__` not showing up
 - `computer-use@openai-bundled` disabled or not discoverable
 - Codex cannot click, type, scroll, drag, or press keys
+- Codex Computer Use never worked after install
+- Codex Computer Use stopped working after update
 - `SkyComputerUseClient mcp` timeout
 - `Transport closed` or `procNotFound`
 - Computer Use fails after a Codex, plugin, or macOS update
@@ -95,7 +103,7 @@ People usually find this project while searching for:
 | Native launcher | Uses `exec` so `SkyComputerUseClient mcp` keeps the Codex AppServer, AppleEvent, and Mach rendezvous context. |
 | Runtime state | Repairs local marketplace mirrors, plugin cache, runtime copy, LaunchServices registration, and stale native client processes. |
 | Persistence | Installs a user LaunchAgent and bootstrap backup so structural repair runs after Codex rewrites, Codex restarts, and Mac reboots. |
-| Verification | Requires fresh native smoke evidence before reporting full operational health. |
+| Verification | Requires the full native MCP tool surface and fresh native smoke evidence before reporting full operational health. |
 | Boundaries | Keeps fallback automation separate from native Computer Use success. |
 
 ## What It Does Not Do
@@ -137,7 +145,7 @@ and current Codex/macOS versions have fresh native evidence.
 Full health requires:
 
 - repaired structural routing
-- native Computer Use tools discoverable
+- full native Computer Use MCP tool surface discoverable
 - no duplicate native MCP client ownership conflict
 - native runtime ready
 - fresh native smoke from the Codex MCP context
@@ -147,13 +155,36 @@ If structural repair is healthy but native smoke is missing or stale, the guard
 fails closed and tells you to run full `ensure`, use `tool_search`, or open a
 fresh Codex thread.
 
+## Native Tool Surface
+
+The guard does not treat a partial tool list as healthy. The native launcher
+must expose this complete MCP surface:
+
+| Tool | What Codex can do through native Computer Use |
+| --- | --- |
+| `list_apps` | Discover running and available apps. |
+| `get_app_state` | Inspect the allowed target app state. |
+| `click` | Click native UI targets. |
+| `perform_secondary_action` | Use a secondary/context action where supported. |
+| `set_value` | Set a supported UI value directly. |
+| `select_text` | Select text in supported controls. |
+| `scroll` | Scroll within the target app. |
+| `drag` | Drag through the native tool path. |
+| `press_key` | Press keys and key chords. |
+| `type_text` | Type text through the native tool path. |
+
+The live smoke test intentionally exercises a safe subset on a local Safari
+test page. Tool-surface parity is checked separately with `tools/list`, so a
+missing `scroll`, `drag`, `set_value`, `select_text`, or secondary action tool
+fails discovery before full health can pass.
+
 ## Fresh Thread Check
 
 After install, open a fresh Codex thread. If native tools are not visible yet,
 ask Codex to search for this exact tool surface:
 
 ```text
-computer-use list_apps get_app_state click type_text press_key
+computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text
 ```
 
 If `mcp__computer_use__` appears, prove the native path with:
