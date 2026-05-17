@@ -46,6 +46,17 @@ SURFACE_DENY_PARTS = {
     "__pycache__",
     ".pytest_cache",
 }
+LOCAL_ARTIFACT_NAMES = {
+    ".DS_Store",
+}
+LOCAL_ARTIFACT_PARTS = {
+    "__pycache__",
+    ".pytest_cache",
+}
+LOCAL_ARTIFACT_SKIP_PREFIXES = (
+    ".git/",
+    "var/",
+)
 GENERIC_ACCOUNT_MARKERS = {
     "actions",
     "admin",
@@ -187,6 +198,20 @@ def scan_public_surface(files: list[Path]) -> list[str]:
     return findings
 
 
+def scan_local_workspace_artifacts() -> list[str]:
+    findings: list[str] = []
+    for path in sorted(REPO_ROOT.rglob("*")):
+        if not path.exists():
+            continue
+        rel = str(path.relative_to(REPO_ROOT))
+        if any(rel == prefix[:-1] or rel.startswith(prefix) for prefix in LOCAL_ARTIFACT_SKIP_PREFIXES):
+            continue
+        parts = set(Path(rel).parts)
+        if path.name in LOCAL_ARTIFACT_NAMES or parts & LOCAL_ARTIFACT_PARTS:
+            findings.append(f"local generated artifact in public workspace: {rel}")
+    return findings
+
+
 def scan_commit_identities(refspec: str) -> list[str]:
     if not repo_has_own_git_metadata():
         return []
@@ -308,6 +333,7 @@ def main() -> int:
             findings.extend(scan_file(path, markers))
     if args.enforce_public_surface or (REPO_ROOT / PUBLIC_RELEASE_MANIFEST).is_file():
         findings.extend(scan_public_surface(files))
+    findings.extend(scan_local_workspace_artifacts())
     if not args.skip_commit_identities:
         findings.extend(scan_commit_identities(refspec))
     refs = history_content_refs(args.all_refs)

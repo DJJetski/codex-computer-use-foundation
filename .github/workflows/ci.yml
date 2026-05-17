@@ -53,5 +53,5 @@ jobs:
       - name: Build public release
         run: scripts/build-public-release.py --output-dir "${TMPDIR:-/tmp}/public-release"
 
-      - name: Drill public release package
+      - name: Drill downloadable package
         run: scripts/release-drill.py --output-dir "${TMPDIR:-/tmp}/public-release-drill"

@@ -29,9 +29,17 @@ native Computer Use has never worked after installing Codex.
 
 ## Quick Install
 
+Requirements:
+
+- macOS with Python 3 available as `python3`
+- OpenAI Codex installed and opened at least once
+- Codex normally at `/Applications/Codex.app`, or a path you can pass with
+  `--codex-app`
+
 ```bash
 git clone https://github.com/DJJetski/codex-computer-use-foundation.git
 cd codex-computer-use-foundation
+python3 --version
 scripts/install.py --dry-run
 scripts/install.py --yes --full-ensure
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
@@ -124,7 +132,7 @@ fresh Codex thread.
 ## Fresh Thread Check
 
 After install, open a fresh Codex thread. If native tools are not visible yet,
-ask Codex to search for:
+ask Codex to search for this exact tool surface:
 
 ```text
 computer-use list_apps get_app_state click type_text press_key

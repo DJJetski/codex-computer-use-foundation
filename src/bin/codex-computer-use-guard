@@ -62,16 +62,31 @@ LSREGISTER = Path(
     "LaunchServices.framework/Support/lsregister"
 )
 
+
+def _safe_codex_app_path(value: str) -> Path | None:
+    value = value.strip()
+    if not value or "\x00" in value:
+        return None
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute() or candidate.suffix != ".app":
+        return None
+    return candidate
+
+
 def _configured_codex_app_path() -> Path:
     env_path = os.environ.get("CODEX_CU_CODEX_APP", "").strip()
     if env_path:
-        return Path(env_path).expanduser()
+        safe_env_path = _safe_codex_app_path(env_path)
+        if safe_env_path is not None:
+            return safe_env_path
     try:
         state_path = CODEX_APP_PATH_STATE.read_text(encoding="utf-8").strip()
     except Exception:
         state_path = ""
     if state_path:
-        return Path(state_path).expanduser()
+        safe_state_path = _safe_codex_app_path(state_path)
+        if safe_state_path is not None:
+            return safe_state_path
     return Path("/Applications/Codex.app")
 
 
@@ -202,6 +217,7 @@ def _verify_openai_codex_app() -> str:
 
 
 def _ensure_codex_app_path_state() -> bool:
+    _verify_openai_codex_app()
     desired = str(OPENAI_CODEX_APP)
     current = CODEX_APP_PATH_STATE.read_text(encoding="utf-8").strip() if CODEX_APP_PATH_STATE.exists() else ""
     if current == desired:
@@ -259,9 +275,58 @@ def _load_native_smoke_raw() -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _file_fingerprint(path: Path) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+    except Exception:
+        return {"path": str(path), "exists": False}
+    return {
+        "path": str(path),
+        "exists": True,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _boot_session_marker() -> str:
+    try:
+        result = _run_capture(["/usr/sbin/sysctl", "-n", "kern.boottime"], timeout=2)
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    match = re.search(r"sec\s*=\s*(\d+)", result.stdout)
+    return match.group(1) if match else result.stdout.strip()
+
+
+def _bundled_computer_use_version() -> str:
+    manifest_path = COMPUTER_USE_SOURCE / ".codex-plugin" / "plugin.json"
+    try:
+        with manifest_path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return ""
+    return str(payload.get("version") or "")
+
+
+def _current_native_smoke_context() -> dict[str, Any]:
+    version = _bundled_computer_use_version()
+    cache_root = CACHE_BASE / version if version else CACHE_BASE
+    native_binary = _preferred_native_binary_path(cache_root)
+    return {
+        "boot_session": _boot_session_marker(),
+        "codex_app": str(OPENAI_CODEX_APP),
+        "codex_exec": _file_fingerprint(OPENAI_CODEX_EXEC),
+        "computer_use_version": version,
+        "native_binary": _file_fingerprint(native_binary),
+        "guard": _file_fingerprint(_self_path()),
+    }
+
+
 def _native_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = payload if payload is not None else _load_native_smoke_raw()
     now = int(time.time())
+    current_context = _current_native_smoke_context()
     if raw is None:
         return {
             "ok": False,
@@ -274,10 +339,14 @@ def _native_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any
             "error": f"no native smoke record at {NATIVE_SMOKE_STATUS}",
             "path": str(NATIVE_SMOKE_STATUS),
             "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
+            "current_smoke_context": current_context,
         }
     recorded_at = int(raw.get("recorded_at") or 0)
     age_seconds = max(0, now - recorded_at) if recorded_at else None
-    fresh = recorded_at > 0 and age_seconds is not None and age_seconds <= NATIVE_SMOKE_MAX_AGE_SECONDS
+    age_fresh = recorded_at > 0 and age_seconds is not None and age_seconds <= NATIVE_SMOKE_MAX_AGE_SECONDS
+    smoke_context = raw.get("smoke_context") if isinstance(raw.get("smoke_context"), dict) else {}
+    context_matches = bool(smoke_context) and smoke_context == current_context
+    fresh = age_fresh and context_matches
     source = str(raw.get("source") or "")
     fallback_used = bool(raw.get("fallback_used"))
     verified_by_guard_runner = bool(raw.get("verified_by_guard_runner"))
@@ -291,8 +360,10 @@ def _native_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any
     failure_class = str(raw.get("failure_class") or "")
     if not authoritative:
         failure_class = failure_class or "non_authoritative_smoke"
-    elif not fresh:
+    elif not age_fresh:
         failure_class = failure_class or "stale_native_smoke"
+    elif not context_matches:
+        failure_class = failure_class or "native_smoke_context_changed"
     elif not list_apps_ok:
         failure_class = failure_class or "native_list_apps_failed"
     elif not list_apps_repeat_ok:
@@ -330,6 +401,9 @@ def _native_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any
             "failure_class": "" if operational else failure_class,
             "path": str(NATIVE_SMOKE_STATUS),
             "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
+            "age_fresh": age_fresh,
+            "smoke_context_matches": context_matches,
+            "current_smoke_context": current_context,
         }
     )
     return status
@@ -590,6 +664,7 @@ def _cleanup_native_smoke_temp_files(smoke_file: Path) -> dict[str, Any]:
 
 def _run_native_smoke() -> dict[str, Any]:
     """Run a fresh Codex-context native MCP smoke and persist only measured results."""
+    _verify_openai_codex_app()
     if not OPENAI_CODEX_EXEC.is_file():
         raise RuntimeError(f"missing Codex executable: {OPENAI_CODEX_EXEC}")
 
@@ -809,6 +884,7 @@ def _run_native_smoke() -> dict[str, Any]:
         "started_at": started_at,
         "source": "codex_app_mcp_tool",
         "runner": "codex-computer-use-guard run-native-smoke",
+        "smoke_context": _current_native_smoke_context(),
         "verified_by_guard_runner": True,
         "fallback_used": fallback_used,
         "codex_exec": str(OPENAI_CODEX_EXEC),
@@ -1670,6 +1746,7 @@ def cleanup_stale_mcp_clients(
     *,
     kill_duplicates: bool = False,
     respect_duplicate_grace: bool = True,
+    kill_orphans: bool = True,
 ) -> dict[str, Any]:
     """Keep stale native MCP clients from poisoning later Codex tool sessions.
 
@@ -1697,7 +1774,7 @@ def cleanup_stale_mcp_clients(
         return True
 
     for pid, ppid, _command in matches:
-        if ppid in {0, 1} or (ppid and not parent_alive(ppid)):
+        if kill_orphans and (ppid in {0, 1} or (ppid and not parent_alive(ppid))):
             if _kill_pid(pid):
                 killed.append(pid)
     skipped_young: list[int] = []
@@ -1726,6 +1803,7 @@ def cleanup_stale_mcp_clients(
         "skipped_young": skipped_young,
         "duplicate_grace_seconds": DUPLICATE_MCP_GRACE_SECONDS,
         "respect_duplicate_grace": respect_duplicate_grace,
+        "kill_orphans": kill_orphans,
     }
 
 
@@ -3181,7 +3259,7 @@ def status() -> dict[str, Any]:
         if _binary_uses_shim(binary) or _binary_uses_shim(service_binary)
         else "native"
     )
-    stale_mcp_clients = cleanup_stale_mcp_clients(kill_duplicates=False)
+    stale_mcp_clients = cleanup_stale_mcp_clients(kill_duplicates=False, kill_orphans=False)
     stale_notify_clients = cleanup_stale_notify_clients(kill_stale=False)
     service_running = _service_running(service_binary)
     service_ready = service_running or bool(appdata_privacy.get("ok"))
@@ -3481,7 +3559,8 @@ def main(argv: list[str]) -> int:
             ensure_config_lock_fh.close()
         else:
             payload = ensure()
-        _write_status_snapshot(payload)
+        if command != "status":
+            _write_status_snapshot(payload)
         if not quiet:
             print(json.dumps(payload, indent=2, sort_keys=True))
         if command in {"ensure-config", "repair-config"}:

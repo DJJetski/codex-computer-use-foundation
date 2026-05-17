@@ -120,7 +120,8 @@ Expected:
 ## MCP Routing Check
 
 ```bash
-/Applications/Codex.app/Contents/Resources/codex mcp get computer-use
+CODEX_APP="$(cat "$HOME/.codex/state/computer-use-guard/codex-app-path" 2>/dev/null || printf '/Applications/Codex.app')"
+"$CODEX_APP/Contents/Resources/codex" mcp get computer-use
 ```
 
 Expected command:
@@ -153,24 +154,22 @@ checked without touching live duplicate transports:
 ~/.codex/bin/codex-computer-use-guard cleanup-mcp-clients | jq '{cleanup, after}'
 ```
 
-If old duplicate clients are still present under the same active Codex
-AppServer and you intentionally want to close those old transports, use the
-explicit operator flag:
+Full `~/.codex/bin/codex-computer-use-guard ensure` runs the same duplicate
+native MCP cleanup after native smoke: it keeps the newest client per Codex
+AppServer parent and removes older duplicate transports so the next fresh
+thread starts from a single native MCP owner.
+
+If you want to do only that cleanup without running the full repair path, use
+the explicit operator flag:
 
 ```bash
 ~/.codex/bin/codex-computer-use-guard cleanup-mcp-clients --force-duplicates | jq '{cleanup, after}'
 ```
 
 Do not run the forced variant while another active thread is in the middle of a
-native Computer Use task.
-
-Full `~/.codex/bin/codex-computer-use-guard ensure` cleans orphaned native MCP
-clients, but it does not force-kill duplicate clients that may belong to another
-active Codex thread. `status` remains read-only. `ok=true` requires
+native Computer Use task. `status` remains read-only. `ok=true` requires
 `mcp_client_ownership.ok=true`; duplicate `SkyComputerUseClient mcp` groups are
-treated as a real operational blocker, not a cosmetic diagnostic. Use
-`cleanup-mcp-clients --force-duplicates` only as an explicit operator action
-when you know no other active thread is using native Computer Use.
+treated as a real operational blocker, not a cosmetic diagnostic.
 
 ## Backup Check
 

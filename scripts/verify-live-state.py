@@ -31,6 +31,8 @@ from foundation_manifest import (
     target_path,
 )
 
+OPENAI_CODEX_BUNDLE_ID = "com.openai.codex"
+
 
 FORBIDDEN_FALLBACK_WORDS = [
     "cliclick",
@@ -181,6 +183,10 @@ def launchagent_checks(home: Path, *, skip_launchctl: bool) -> list[dict[str, ob
         checks.append(check(payload.get("Label") == GUARD_LAUNCH_AGENT_LABEL, "guard LaunchAgent label"))
         env = payload.get("EnvironmentVariables", {})
         checks.append(check(bool(env.get("CODEX_CU_CODEX_APP")), "LaunchAgent persists Codex app path"))
+        state_path = home / ".codex/state/computer-use-guard/codex-app-path"
+        if state_path.is_file():
+            state_value = state_path.read_text(encoding="utf-8").strip()
+            checks.append(check(env.get("CODEX_CU_CODEX_APP") == state_value, "LaunchAgent Codex app path matches persisted state"))
         args = payload.get("ProgramArguments", [])
         checks.append(check(args[:1] == [str(home / "Library/Application Support/CodexComputerUseGuard/codex-computer-use-guard-bootstrap")], "LaunchAgent bootstrap path"))
         checks.append(check("ensure-config" in args, "LaunchAgent runs ensure-config"))
@@ -193,6 +199,30 @@ def launchagent_checks(home: Path, *, skip_launchctl: bool) -> list[dict[str, ob
         for legacy_label in LEGACY_GUARD_LAUNCH_AGENT_LABELS:
             legacy_result = run(["launchctl", "print", f"gui/{os.getuid()}/{legacy_label}"], timeout=5)
             checks.append(check(legacy_result.returncode != 0, f"legacy guard LaunchAgent not loaded: {legacy_label}"))
+    return checks
+
+
+def codex_app_path_checks(home: Path) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
+    state_path = home / ".codex/state/computer-use-guard/codex-app-path"
+    checks.append(check(state_path.is_file(), "persisted Codex app path exists"))
+    if not state_path.is_file():
+        return checks
+    value = state_path.read_text(encoding="utf-8").strip()
+    app = Path(value).expanduser()
+    checks.append(check(bool(value), "persisted Codex app path is non-empty"))
+    checks.append(check(app.is_absolute(), "persisted Codex app path is absolute", value))
+    checks.append(check(app.suffix == ".app", "persisted Codex app path is app bundle", value))
+    info_plist = app / "Contents/Info.plist"
+    checks.append(check(info_plist.is_file(), "persisted Codex app Info.plist exists", str(info_plist)))
+    if info_plist.is_file():
+        try:
+            payload = plistlib.loads(info_plist.read_bytes())
+            bundle_id = str(payload.get("CFBundleIdentifier") or "")
+        except Exception as exc:  # noqa: BLE001
+            checks.append(check(False, "persisted Codex app Info.plist parse", str(exc)))
+        else:
+            checks.append(check(bundle_id == OPENAI_CODEX_BUNDLE_ID, "persisted Codex app bundle id", bundle_id))
     return checks
 
 
@@ -244,16 +274,8 @@ def backup_checks(home: Path) -> list[dict[str, object]]:
     return checks
 
 
-def guard_status_checks(home: Path, *, require_operational: bool) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    guard = home / ".codex/bin/codex-computer-use-guard"
-    if not guard.is_file() or home != Path.home().resolve():
-        return [], None
-    result = run([str(guard), "status"], timeout=30)
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return [check(False, "guard status JSON", result.stdout[-400:])], None
-    checks = [check(result.returncode == 0, "guard status exits zero", f"returncode={result.returncode}")]
+def guard_status_payload_checks(payload: dict[str, object], *, require_operational: bool) -> list[dict[str, object]]:
+    checks: list[dict[str, object]] = []
     if require_operational:
         layers = payload.get("health_layers") or {}
         checks.extend(
@@ -268,10 +290,38 @@ def guard_status_checks(home: Path, *, require_operational: bool) -> tuple[list[
             [
                 check(bool(smoke.get("ok")), "native smoke ok=true"),
                 check(bool(smoke.get("fresh")), "native smoke fresh=true"),
+                check(smoke.get("age_fresh") is True, "native smoke age_fresh=true"),
+                check(smoke.get("smoke_context_matches") is True, "native smoke context matches current boot/runtime"),
+                check(smoke.get("appserver_rendezvous") is True, "native smoke appserver_rendezvous=true"),
+                check(smoke.get("operational") is True, "native smoke operational=true"),
+                check(smoke.get("second_mouse_verified") is True, "native smoke second_mouse_verified=true"),
                 check(smoke.get("fallback_used") is False, "native smoke fallback_used=false"),
                 check(smoke.get("unstructured_stdout_lines") == 0, "native smoke has no unstructured stdout"),
+                check(int(smoke.get("list_apps_completed") or 0) >= 2, "native smoke list_apps completed at least twice"),
+                check(int(smoke.get("get_app_state_completed") or 0) >= 2, "native smoke get_app_state completed at least twice"),
+                check(int(smoke.get("click_completed") or 0) >= 2, "native smoke click completed at least twice"),
+                check(smoke.get("safari_click_received") is True, "native smoke Safari click received"),
+                check(smoke.get("safari_type_received") is True, "native smoke Safari type received"),
+                check(smoke.get("safari_input_verified") is True, "native smoke Safari input verified"),
+                check(smoke.get("cleanup_keypress_ok") is True, "native smoke cleanup keypress ok"),
+                check((smoke.get("smoke_cleanup") or {}).get("current_removed") is True, "native smoke temp cleanup removed current marker"),
+                check((smoke.get("smoke_cleanup") or {}).get("errors") == [], "native smoke temp cleanup has no errors"),
             ]
         )
+    return checks
+
+
+def guard_status_checks(home: Path, *, require_operational: bool) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    guard = home / ".codex/bin/codex-computer-use-guard"
+    if not guard.is_file() or home != Path.home().resolve():
+        return [], None
+    result = run([str(guard), "status"], timeout=30)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return [check(False, "guard status JSON", result.stdout[-400:])], None
+    checks = [check(result.returncode == 0, "guard status exits zero", f"returncode={result.returncode}")]
+    checks.extend(guard_status_payload_checks(payload, require_operational=require_operational))
     return checks, payload
 
 
@@ -305,6 +355,7 @@ def main() -> int:
     if not args.skip_live_invariants:
         checks.extend(config_checks(home))
         checks.extend(mcp_checks(home))
+        checks.extend(codex_app_path_checks(home))
         checks.extend(launchagent_checks(home, skip_launchctl=args.skip_launchctl))
         checks.extend(dialog_autopilot_checks(home, skip_launchctl=args.skip_launchctl))
         checks.extend(backup_checks(home))

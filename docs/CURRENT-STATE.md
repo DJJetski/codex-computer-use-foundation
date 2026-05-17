@@ -57,13 +57,15 @@ A release is healthy only after installing from the public release tree with
   "native_smoke": {
     "ok": true,
     "fresh": true,
+    "age_fresh": true,
+    "smoke_context_matches": true,
     "failure_class": "",
     "appserver_rendezvous": true,
     "operational": true,
     "second_mouse_verified": true,
     "fallback_used": false,
     "list_apps_completed": 2,
-    "get_app_state_completed": 4,
+    "get_app_state_completed": 2,
     "click_completed": 2,
     "safari_click_received": true,
     "safari_type_received": true,
@@ -85,15 +87,21 @@ Expected high-level result:
 - Manifest-owned live files matched the repo source.
 - Failed verifier checks: none.
 - `mcp_client_ownership.ok=true` with no duplicate parent groups. Full
-  `ensure` cleans orphaned native MCP clients, but it does not force-kill
-  duplicate clients that may belong to another active Codex thread. Duplicate
-  parent groups remain fail-closed until an explicit operator cleanup or thread
-  restart removes them.
+  `ensure` first cleans orphaned native MCP clients, then collapses duplicate
+  native MCP client groups under the same Codex AppServer parent by keeping the
+  newest client and removing older duplicate transports. Duplicate parent
+  groups remain fail-closed evidence until `ensure`, explicit cleanup, or a
+  thread restart removes them.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 
-`/Applications/Codex.app/Contents/Resources/codex mcp get computer-use` must
-show:
+The persisted Codex app path must point at the OpenAI Codex bundle
+(`com.openai.codex`). Its MCP routing must show:
+
+```bash
+CODEX_APP="$(cat "$HOME/.codex/state/computer-use-guard/codex-app-path" 2>/dev/null || printf '/Applications/Codex.app')"
+"$CODEX_APP/Contents/Resources/codex" mcp get computer-use
+```
 
 ```text
 computer-use

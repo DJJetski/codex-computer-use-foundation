@@ -236,9 +236,10 @@ it, and removes stale `codex-cu-native-smoke-*.txt` temp files from older
 releases.
 
 Duplicate native MCP clients under one Codex AppServer parent are fail-closed
-health evidence. The guard cleans orphaned clients automatically, but active
-duplicate transports require explicit operator cleanup so a repair run does not
-silently kill another thread's live native Computer Use session.
+health evidence. The guard cleans orphaned clients automatically. Full
+`ensure` also collapses duplicate native transports by keeping the newest
+client per AppServer parent and removing older duplicates before reporting
+operational health.
 
 `ok=true` requires all of the above.
 

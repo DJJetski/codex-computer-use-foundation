@@ -15,6 +15,20 @@ sys.dont_write_bytecode = True
 from foundation_manifest import assert_no_symlink_components, assert_within_home, safe_env_home
 
 
+def safe_symlink_target(home: Path, link_path: Path, raw_target: object) -> str:
+    link_target = str(raw_target or "")
+    if not link_target or "\x00" in link_target:
+        raise ValueError(f"refusing empty or invalid symlink target for {link_path}")
+    candidate = Path(link_target)
+    resolved = candidate if candidate.is_absolute() else link_path.parent / candidate
+    resolved = Path(os.path.abspath(resolved))
+    try:
+        resolved.relative_to(home.resolve())
+    except ValueError as exc:
+        raise ValueError(f"refusing symlink target outside home: {link_path} -> {link_target}") from exc
+    return link_target
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rollback a Codex Computer Use repair install snapshot")
     parser.add_argument("snapshot", help="snapshot directory containing manifest.json")
@@ -77,7 +91,12 @@ def main() -> int:
             else:
                 target.unlink()
         if item.get("symlink"):
-            os.symlink(str(item.get("link_target") or ""), target)
+            try:
+                link_target = safe_symlink_target(home, target, item.get("link_target"))
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+            os.symlink(link_target, target)
             continue
         tmp = target.with_name(f".{target.name}.rollback-{os.getpid()}")
         shutil.copy2(backup, tmp)

@@ -155,7 +155,8 @@ Use the full path for explicit diagnostics:
 ~/.codex/bin/codex-computer-use-guard ensure
 ~/.codex/bin/codex-computer-use-guard status
 ~/.codex/bin/codex-computer-use-preflight status
-/Applications/Codex.app/Contents/Resources/codex mcp get computer-use
+CODEX_APP="$(cat "$HOME/.codex/state/computer-use-guard/codex-app-path" 2>/dev/null || printf '/Applications/Codex.app')"
+"$CODEX_APP/Contents/Resources/codex" mcp get computer-use
 ```
 
 The guard must keep all of these true:
@@ -482,7 +483,8 @@ Useful state checks:
 ```bash
 ~/.codex/bin/codex-computer-use-guard ensure
 ~/.codex/bin/codex-computer-use-guard status
-/Applications/Codex.app/Contents/Resources/codex mcp get computer-use
+CODEX_APP="$(cat "$HOME/.codex/state/computer-use-guard/codex-app-path" 2>/dev/null || printf '/Applications/Codex.app')"
+"$CODEX_APP/Contents/Resources/codex" mcp get computer-use
 launchctl print gui/$(id -u)/io.github.codex-computer-use-foundation.guard
 ps -axo pid=,ppid=,command= | rg 'SkyComputerUseClient|SkyComputerUseService'
 ~/.codex/bin/codex-computer-use-notify --help

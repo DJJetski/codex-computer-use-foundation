@@ -39,13 +39,13 @@ scripts/verify-live-state.py --expect-installed-from-repo --require-operational 
 Keep pull requests narrow and include:
 
 - what changed and why
-- which release or safety invariant is affected
+- which install, package, or safety invariant is affected
 - the exact checks run and their result
 - any live Mac verification that was intentionally skipped
 
 Do not include raw `$HOME/.codex` state, rollback snapshots, smoke result JSON,
 OAuth data, cookies, tokens, local app bundles, `.env` files, or generated
-release artifacts under `var/`.
+artifacts under `var/`.
 
 ## Contribution License
 
@@ -53,7 +53,7 @@ By submitting a contribution, you agree that your contribution is licensed
 under the Apache License 2.0, unless you clearly state otherwise before the
 contribution is merged.
 
-Funding is disabled for the current public release surface. If donations are
+Funding is disabled for the current public download surface. If donations are
 enabled later, they remain optional and separate from contribution review, and
 do not buy support, maintainer availability, merge priority, or security
 response priority.

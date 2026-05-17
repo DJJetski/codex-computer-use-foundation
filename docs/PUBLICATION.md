@@ -4,7 +4,7 @@ This project has two publication surfaces:
 
 - the source repository, which may be private or public depending on maintainer
   choice
-- the generated public release package under `var/public-release/`, which is
+- the generated download package under `var/public-release/`, which is
   the end-user distribution surface
 
 Public wording should stay centered on the user problem: Codex is installed on
@@ -30,8 +30,8 @@ The repository includes `SECURITY.md`, `CONTRIBUTING.md`, GitHub issue and pull
 request templates, `LICENSE`, `.github/FUNDING.yml`, Dependabot configuration
 for GitHub Actions, and CI that runs the portable release-safety checks.
 
-The source repository and generated release package are licensed under Apache
-License 2.0. Keep the root `LICENSE` file in the public release package so
+The source repository and generated download package are licensed under Apache
+License 2.0. Keep the root `LICENSE` file in the download package so
 GitHub and release consumers can detect the license without reading secondary
 documentation.
 
@@ -140,8 +140,10 @@ home; it is the release-engineering proof for the real native path.
 For a GitHub release consumer, publish the generated tarball and use:
 
 ```bash
-curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz <release-asset-url>
-curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz.sha256 <checksum-asset-url>
+curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz \
+  https://github.com/DJJetski/codex-computer-use-foundation/releases/latest/download/codex-computer-use-foundation-public.tar.gz
+curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz.sha256 \
+  https://github.com/DJJetski/codex-computer-use-foundation/releases/latest/download/codex-computer-use-foundation-public.tar.gz.sha256
 cd /tmp
 shasum -a 256 -c codex-computer-use-foundation-public.tar.gz.sha256
 mkdir -p /tmp/codex-computer-use-foundation-release

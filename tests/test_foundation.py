@@ -6,6 +6,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import io
+import plistlib
 import re
 import shutil
 import stat
@@ -45,6 +46,17 @@ def load_guard_module():
     spec = importlib.util.spec_from_loader(loader.name, loader)
     if spec is None or spec.loader is None:
         raise RuntimeError("failed to load guard module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_script_module(name: str, relpath: str):
+    path = repo_path(relpath)
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {relpath}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -247,6 +259,101 @@ class FoundationTests(unittest.TestCase):
 
         self.assertEqual(killed, [])
         self.assertEqual(cleanup["running"], 2)
+
+    def test_status_mcp_cleanup_is_read_only_for_orphans(self) -> None:
+        guard = load_guard_module()
+        killed: list[int] = []
+        guard._processes_matching = lambda needle: [(901, 1, "/tmp/SkyComputerUseClient mcp")]
+        guard._kill_pid = lambda pid: killed.append(pid) or True
+
+        cleanup = guard.cleanup_stale_mcp_clients(kill_duplicates=False, kill_orphans=False)
+
+        self.assertEqual(killed, [])
+        self.assertFalse(cleanup["kill_orphans"])
+        self.assertEqual(cleanup["running"], 1)
+
+    def test_status_command_does_not_write_status_snapshot(self) -> None:
+        guard = load_guard_module()
+        writes: list[dict[str, object]] = []
+        guard.status = lambda: {"ok": True}
+        guard._write_status_snapshot = lambda payload: writes.append(payload)
+
+        result = guard.main(["guard", "status", "--quiet"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(writes, [])
+
+    def test_docs_match_duplicate_mcp_cleanup_policy(self) -> None:
+        policy_needles = [
+            "duplicate",
+            "native MCP",
+            "newest",
+            "older duplicate",
+            "fail-closed",
+        ]
+        for rel in ["docs/CURRENT-STATE.md", "docs/RUNBOOK.md", "docs/ARCHITECTURE.md"]:
+            with self.subTest(rel=rel):
+                text = repo_path(rel).read_text(encoding="utf-8")
+                normalized = text.lower()
+                for needle in policy_needles:
+                    self.assertIn(needle.lower(), normalized)
+                self.assertNotIn("does not force-" + "kill duplicate clients", text)
+                self.assertNotIn("explicit operator cleanup so a repair run does " + "not", text)
+
+    def test_native_smoke_status_requires_matching_runtime_context(self) -> None:
+        guard = load_guard_module()
+        context = {"boot_session": "one", "codex_exec": {"path": "/Applications/Codex.app/Contents/Resources/codex"}}
+        guard._current_native_smoke_context = lambda: context
+        payload = {
+            "recorded_at": int(guard.time.time()),
+            "source": "codex_app_mcp_tool",
+            "verified_by_guard_runner": True,
+            "fallback_used": False,
+            "list_apps_ok": True,
+            "list_apps_repeat_ok": True,
+            "get_app_state_ok": True,
+            "structured_events_found": True,
+            "interaction_ok": True,
+            "second_mouse_verified": True,
+            "smoke_context": context,
+        }
+
+        ok_status = guard._native_smoke_status(dict(payload))
+        self.assertTrue(ok_status["ok"])
+        self.assertTrue(ok_status["age_fresh"])
+        self.assertTrue(ok_status["smoke_context_matches"])
+
+        stale_context = dict(payload)
+        stale_context["smoke_context"] = {"boot_session": "previous"}
+        stale_status = guard._native_smoke_status(stale_context)
+        self.assertFalse(stale_status["ok"])
+        self.assertFalse(stale_status["fresh"])
+        self.assertTrue(stale_status["age_fresh"])
+        self.assertFalse(stale_status["smoke_context_matches"])
+        self.assertEqual(stale_status["failure_class"], "native_smoke_context_changed")
+
+    def test_codex_app_path_is_verified_before_persist_or_smoke(self) -> None:
+        guard = load_guard_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "codex-app-path"
+            old_state = guard.CODEX_APP_PATH_STATE
+            old_app = guard.OPENAI_CODEX_APP
+            old_exec = guard.OPENAI_CODEX_EXEC
+            try:
+                guard.CODEX_APP_PATH_STATE = state
+                guard.OPENAI_CODEX_APP = Path(tmp) / "FakeCodex.app"
+                guard.OPENAI_CODEX_EXEC = guard.OPENAI_CODEX_APP / "Contents/Resources/codex"
+                guard._verify_openai_codex_app = lambda: (_ for _ in ()).throw(RuntimeError("bad bundle"))
+
+                with self.assertRaisesRegex(RuntimeError, "bad bundle"):
+                    guard._ensure_codex_app_path_state()
+                self.assertFalse(state.exists())
+                with self.assertRaisesRegex(RuntimeError, "bad bundle"):
+                    guard._run_native_smoke()
+            finally:
+                guard.CODEX_APP_PATH_STATE = old_state
+                guard.OPENAI_CODEX_APP = old_app
+                guard.OPENAI_CODEX_EXEC = old_exec
 
     def test_native_smoke_cleanup_removes_temp_text_files(self) -> None:
         guard = load_guard_module()
@@ -471,6 +578,106 @@ class FoundationTests(unittest.TestCase):
             self.assertEqual(verify.returncode, 0, verify.stdout)
             payload = json.loads(verify.stdout)
             self.assertTrue(payload["ok"])
+
+    def test_installer_snapshot_directory_is_collision_resistant(self) -> None:
+        install_module = load_script_module("install_under_collision_test", "scripts/install.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            original_strftime = install_module.time.strftime
+            try:
+                install_module.time.strftime = lambda _fmt: "20260101-010101"
+                first = install_module.make_snapshot(home, dry_run=False)
+                second = install_module.make_snapshot(home, dry_run=False)
+            finally:
+                install_module.time.strftime = original_strftime
+
+            self.assertEqual(first.name, "20260101-010101")
+            self.assertEqual(second.name, "20260101-010101-001")
+            self.assertTrue((first / "manifest.json").is_file())
+            self.assertTrue((second / "manifest.json").is_file())
+
+    def test_rollback_refuses_symlink_targets_outside_home(self) -> None:
+        rollback = load_script_module("rollback_under_symlink_test", "scripts/rollback.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            link = home / ".codex/bin/example"
+            link.parent.mkdir(parents=True)
+
+            self.assertEqual(rollback.safe_symlink_target(home, link, "../target"), "../target")
+            with self.assertRaisesRegex(ValueError, "outside home"):
+                rollback.safe_symlink_target(home, link, "/etc/passwd")
+            with self.assertRaisesRegex(ValueError, "outside home"):
+                rollback.safe_symlink_target(home, link, "../../../outside")
+            with self.assertRaisesRegex(ValueError, "empty or invalid"):
+                rollback.safe_symlink_target(home, link, "")
+
+    def test_verify_live_state_checks_codex_app_bundle_identity(self) -> None:
+        verifier = load_script_module("verify_live_state_app_path_test", "scripts/verify-live-state.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            app = home / "Applications/Codex.app"
+            contents = app / "Contents"
+            contents.mkdir(parents=True)
+            (contents / "Info.plist").write_bytes(
+                plistlib.dumps({"CFBundleIdentifier": "com.openai.codex"})
+            )
+            state = home / ".codex/state/computer-use-guard/codex-app-path"
+            state.parent.mkdir(parents=True)
+            state.write_text(str(app) + "\n", encoding="utf-8")
+
+            checks = verifier.codex_app_path_checks(home)
+            self.assertTrue(all(item["ok"] for item in checks), checks)
+
+            (contents / "Info.plist").write_bytes(
+                plistlib.dumps({"CFBundleIdentifier": "com.WavesAudio.CODEX"})
+            )
+            checks = verifier.codex_app_path_checks(home)
+            bundle_check = next(item for item in checks if item["name"] == "persisted Codex app bundle id")
+            self.assertFalse(bundle_check["ok"])
+
+    def test_verify_live_state_requires_full_native_smoke_contract(self) -> None:
+        verifier = load_script_module("verify_live_state_smoke_contract_test", "scripts/verify-live-state.py")
+        payload = {
+            "ok": True,
+            "structural_ok": True,
+            "health_layers": {
+                "configured": True,
+                "discoverable": True,
+                "runtime_ready": True,
+                "mcp_client_ownership": True,
+                "appserver_rendezvous": True,
+                "operational": True,
+                "second_mouse_verified": True,
+            },
+            "native_smoke": {
+                "ok": True,
+                "fresh": True,
+                "age_fresh": True,
+                "smoke_context_matches": True,
+                "appserver_rendezvous": True,
+                "operational": True,
+                "second_mouse_verified": True,
+                "fallback_used": False,
+                "unstructured_stdout_lines": 0,
+                "list_apps_completed": 2,
+                "get_app_state_completed": 2,
+                "click_completed": 2,
+                "safari_click_received": True,
+                "safari_type_received": True,
+                "safari_input_verified": True,
+                "cleanup_keypress_ok": True,
+                "smoke_cleanup": {"current_removed": True, "errors": []},
+            },
+        }
+
+        checks = verifier.guard_status_payload_checks(payload, require_operational=True)
+        self.assertTrue(all(item["ok"] for item in checks), checks)
+
+        weak_payload = json.loads(json.dumps(payload))
+        weak_payload["native_smoke"]["safari_input_verified"] = False
+        checks = verifier.guard_status_payload_checks(weak_payload, require_operational=True)
+        failed = [item["name"] for item in checks if not item["ok"]]
+        self.assertIn("native smoke Safari input verified", failed)
 
     def test_installer_scrubs_direct_aliases_and_foundation_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1820,6 +2027,11 @@ class FoundationTests(unittest.TestCase):
                 os.environ.pop("PUBLIC_RELEASE_AUDIT_EXTRA_MARKERS", None)
             else:
                 os.environ["PUBLIC_RELEASE_AUDIT_EXTRA_MARKERS"] = old_value
+
+    def test_public_release_audit_rejects_local_workspace_artifacts(self) -> None:
+        module = load_script_module("public_release_audit_artifacts_test", "scripts/public-release-audit.py")
+        findings = module.scan_local_workspace_artifacts()
+        self.assertEqual(findings, [])
 
     def test_public_release_audit_scans_history_for_email_and_secret_patterns(self) -> None:
         module_path = SCRIPTS / "public-release-audit.py"

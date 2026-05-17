@@ -163,10 +163,22 @@ def snapshot_targets(home: Path) -> list[Path]:
 def make_snapshot(home: Path, *, dry_run: bool) -> Path | None:
     if dry_run:
         return None
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    snapshot_dir = home / SNAPSHOT_ROOT / stamp
+    base_stamp = time.strftime("%Y%m%d-%H%M%S")
+    snapshot_dir: Path | None = None
+    stamp = base_stamp
+    for attempt in range(1000):
+        stamp = base_stamp if attempt == 0 else f"{base_stamp}-{attempt:03d}"
+        candidate = home / SNAPSHOT_ROOT / stamp
+        files_dir = candidate / "files"
+        try:
+            files_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        snapshot_dir = candidate
+        break
+    if snapshot_dir is None:
+        raise RuntimeError(f"could not allocate unique snapshot directory under {home / SNAPSHOT_ROOT}")
     files_dir = snapshot_dir / "files"
-    files_dir.mkdir(parents=True, exist_ok=False)
     manifest: dict[str, object] = {
         "created_at": stamp,
         "home": str(home),

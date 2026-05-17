@@ -1,4 +1,4 @@
-# Clone Install
+# Install Native Codex Computer Use Repair
 
 This repo is an installable source distribution for repairing native Codex
 Computer Use on macOS.
@@ -87,14 +87,15 @@ before running the guard.
 After installation, open a fresh Codex thread and use the native fresh-thread
 procedure in `docs/RUNBOOK.md`.
 
-## Install From A Public Release
+## Install From The Latest Download
 
-After a GitHub release exists, download the public tarball and its `.sha256`
-sidecar:
+Download the latest published source tarball and its `.sha256` sidecar:
 
 ```bash
-curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz <release-asset-url>
-curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz.sha256 <checksum-asset-url>
+curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz \
+  https://github.com/DJJetski/codex-computer-use-foundation/releases/latest/download/codex-computer-use-foundation-public.tar.gz
+curl -L -o /tmp/codex-computer-use-foundation-public.tar.gz.sha256 \
+  https://github.com/DJJetski/codex-computer-use-foundation/releases/latest/download/codex-computer-use-foundation-public.tar.gz.sha256
 cd /tmp
 shasum -a 256 -c codex-computer-use-foundation-public.tar.gz.sha256
 mkdir -p /tmp/codex-computer-use-foundation-release
@@ -104,7 +105,7 @@ scripts/install.py --dry-run
 scripts/install.py --yes --full-ensure
 ```
 
-Codex can follow the same steps when given the release asset URL. The package
+Codex can follow the same steps when given the download URL. The package
 contains all installer source files; it must not depend on this private working
 tree.
 
