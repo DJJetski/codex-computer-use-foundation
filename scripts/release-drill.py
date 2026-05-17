@@ -105,7 +105,18 @@ def safe_extract_tarball(tarball: Path, destination: Path) -> None:
                 raise RuntimeError(f"refusing special member in release tarball: {member.name}")
             target = (destination / member.name).resolve()
             target.relative_to(destination_resolved)
-        archive.extractall(destination)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                os.chmod(target, 0o700)
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                raise RuntimeError(f"cannot read tar member: {member.name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            mode = 0o700 if member.mode & 0o111 else 0o600
+            os.chmod(target, mode)
 
 
 def build_public_release(output_dir: Path, name: str, commands: list[dict[str, object]]) -> tuple[Path, Path, str]:

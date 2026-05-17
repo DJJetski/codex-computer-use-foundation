@@ -340,11 +340,11 @@ if needs_restore and BACKUP.is_file():
     MAIN.parent.mkdir(parents=True, exist_ok=True)
     tmp = MAIN.with_name(MAIN.name + f".restore-{{os.getpid()}}")
     shutil.copy2(BACKUP, tmp)
-    os.chmod(tmp, 0o755)
+    os.chmod(tmp, 0o700)
     os.replace(tmp, MAIN)
     log("info", "restored dialog autopilot from bootstrap backup", main=str(MAIN), backup=str(BACKUP))
 if MAIN.is_file() and not os.access(MAIN, os.X_OK):
-    os.chmod(MAIN, 0o755)
+    os.chmod(MAIN, 0o700)
 
 if not MAIN.is_file():
     log("error", "dialog autopilot missing and bootstrap backup unavailable", main=str(MAIN), backup=str(BACKUP))
@@ -374,7 +374,7 @@ def _write_bootstrap_assets() -> bool:
         if not BACKUP.exists() or source.read_bytes() != BACKUP.read_bytes():
             tmp = BACKUP.with_name(BACKUP.name + f".tmp-{os.getpid()}")
             shutil.copy2(source, tmp)
-            os.chmod(tmp, 0o755)
+            os.chmod(tmp, 0o700)
             os.replace(tmp, BACKUP)
             changed = True
     bootstrap = _bootstrap_script()
@@ -382,11 +382,11 @@ def _write_bootstrap_assets() -> bool:
     if current != bootstrap:
         tmp = BOOTSTRAP.with_name(BOOTSTRAP.name + f".tmp-{os.getpid()}")
         tmp.write_text(bootstrap, encoding="utf-8")
-        os.chmod(tmp, 0o755)
+        os.chmod(tmp, 0o700)
         os.replace(tmp, BOOTSTRAP)
         changed = True
     elif not os.access(BOOTSTRAP, os.X_OK):
-        os.chmod(BOOTSTRAP, 0o755)
+        os.chmod(BOOTSTRAP, 0o700)
         changed = True
     return changed
 

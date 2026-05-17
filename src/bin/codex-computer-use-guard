@@ -869,11 +869,11 @@ def restore_if_needed() -> None:
         MAIN.parent.mkdir(parents=True, exist_ok=True)
         tmp = MAIN.with_name(MAIN.name + f".restore-{{os.getpid()}}")
         shutil.copy2(BACKUP, tmp)
-        os.chmod(tmp, 0o755)
+        os.chmod(tmp, 0o700)
         os.replace(tmp, MAIN)
         log("info", "restored computer-use guard from bootstrap backup", main=str(MAIN), backup=str(BACKUP))
     if MAIN.is_file() and not os.access(MAIN, os.X_OK):
-        os.chmod(MAIN, 0o755)
+        os.chmod(MAIN, 0o700)
         log("info", "restored computer-use guard executable bit", main=str(MAIN))
 
 
@@ -896,7 +896,7 @@ def _write_bootstrap_assets() -> bool:
             if not GUARD_BACKUP.exists() or source.read_bytes() != GUARD_BACKUP.read_bytes():
                 tmp = GUARD_BACKUP.with_name(GUARD_BACKUP.name + f".tmp-{os.getpid()}")
                 shutil.copy2(source, tmp)
-                os.chmod(tmp, 0o755)
+                os.chmod(tmp, 0o700)
                 os.replace(tmp, GUARD_BACKUP)
                 changed = True
         except Exception:
@@ -906,11 +906,11 @@ def _write_bootstrap_assets() -> bool:
     if current != bootstrap:
         tmp = BOOTSTRAP.with_name(BOOTSTRAP.name + f".tmp-{os.getpid()}")
         tmp.write_text(bootstrap, encoding="utf-8")
-        os.chmod(tmp, 0o755)
+        os.chmod(tmp, 0o700)
         os.replace(tmp, BOOTSTRAP)
         changed = True
     elif not os.access(BOOTSTRAP, os.X_OK):
-        os.chmod(BOOTSTRAP, 0o755)
+        os.chmod(BOOTSTRAP, 0o700)
         changed = True
     return changed
 
@@ -1278,18 +1278,18 @@ def ensure_broker_backup() -> bool:
         if not BROKER_BACKUP.exists() or COMPUTER_USE_BROKER.read_bytes() != BROKER_BACKUP.read_bytes():
             tmp = BROKER_BACKUP.with_name(BROKER_BACKUP.name + f".tmp-{os.getpid()}")
             shutil.copy2(COMPUTER_USE_BROKER, tmp)
-            os.chmod(tmp, 0o755)
+            os.chmod(tmp, 0o700)
             os.replace(tmp, BROKER_BACKUP)
             changed = True
         if not os.access(COMPUTER_USE_BROKER, os.X_OK):
-            os.chmod(COMPUTER_USE_BROKER, 0o755)
+            os.chmod(COMPUTER_USE_BROKER, 0o700)
             changed = True
         return changed
     if BROKER_BACKUP.is_file():
         COMPUTER_USE_BROKER.parent.mkdir(parents=True, exist_ok=True)
         tmp = COMPUTER_USE_BROKER.with_name(COMPUTER_USE_BROKER.name + f".tmp-{os.getpid()}")
         shutil.copy2(BROKER_BACKUP, tmp)
-        os.chmod(tmp, 0o755)
+        os.chmod(tmp, 0o700)
         os.replace(tmp, COMPUTER_USE_BROKER)
         return True
     return changed
@@ -1330,11 +1330,11 @@ def ensure_plugin_local_mcp_wrapper(plugin_root: Path) -> bool:
     if current_wrapper != desired_wrapper:
         tmp = wrapper.with_name(wrapper.name + f".tmp-{os.getpid()}")
         tmp.write_text(desired_wrapper, encoding="utf-8")
-        os.chmod(tmp, 0o755)
+        os.chmod(tmp, 0o700)
         os.replace(tmp, wrapper)
         changed = True
     elif not os.access(wrapper, os.X_OK):
-        os.chmod(wrapper, 0o755)
+        os.chmod(wrapper, 0o700)
         changed = True
 
     mcp_path = plugin_root / ".mcp.json"
@@ -2424,11 +2424,11 @@ def _ensure_text_file(path: Path, content: str, *, executable: bool = False) -> 
         tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
         tmp.write_text(content, encoding="utf-8")
         if executable:
-            os.chmod(tmp, 0o755)
+            os.chmod(tmp, 0o700)
         os.replace(tmp, path)
         changed = True
     if executable and not os.access(path, os.X_OK):
-        os.chmod(path, 0o755)
+        os.chmod(path, 0o700)
         changed = True
     return changed
 

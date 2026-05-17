@@ -11,48 +11,49 @@ from typing import Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+USER_EXECUTABLE_MODE = 0o700
 
 INSTALL_MANIFEST: list[dict[str, object]] = [
     {
         "source": "src/bin/codex-computer-use-guard",
         "target": ".codex/bin/codex-computer-use-guard",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "python",
     },
     {
         "source": "src/bin/codex-computer-use-native-launcher",
         "target": ".codex/bin/codex-computer-use-native-launcher",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "shell",
     },
     {
         "source": "src/bin/codex-computer-use-native-smoke",
         "target": ".codex/bin/codex-computer-use-native-smoke",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "python",
     },
     {
         "source": "src/bin/codex-computer-use-preflight",
         "target": ".codex/bin/codex-computer-use-preflight",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "python",
     },
     {
         "source": "src/bin/codex-computer-use-notify",
         "target": ".codex/bin/codex-computer-use-notify",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "python",
     },
     {
         "source": "src/bin/codex-dialog-autopilot",
         "target": ".codex/bin/codex-dialog-autopilot",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "python",
     },
     {
         "source": "src/bin/codex-computer-use-broker",
         "target": ".codex/bin/codex-computer-use-broker",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "shell",
     },
     {
@@ -76,7 +77,7 @@ INSTALL_MANIFEST: list[dict[str, object]] = [
     {
         "source": "src/plugin-shim/computer-use/codex-computer-use-mcp",
         "target": ".codex/plugins/marketplaces/openai-bundled/plugins/computer-use/codex-computer-use-mcp",
-        "mode": 0o755,
+        "mode": USER_EXECUTABLE_MODE,
         "kind": "shell",
     },
 ]
