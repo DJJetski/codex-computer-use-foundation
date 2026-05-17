@@ -39,7 +39,11 @@ jobs:
       - name: Run release and secret audits
         run: |
           scripts/secret-scan.py --include-untracked
-          scripts/public-release-audit.py --include-untracked --enforce-public-surface
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            scripts/public-release-audit.py --include-untracked --enforce-public-surface --skip-commit-identities
+          else
+            scripts/public-release-audit.py --include-untracked --enforce-public-surface
+          fi
           git diff --check
 
       - name: Run full history public audit

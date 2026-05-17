@@ -1607,6 +1607,32 @@ class FoundationTests(unittest.TestCase):
             else:
                 os.environ["PUBLIC_RELEASE_AUDIT_EXTRA_MARKERS"] = old_value
 
+    def test_public_release_audit_ignores_generic_ci_account_markers(self) -> None:
+        module_path = SCRIPTS / "public-release-audit.py"
+        loader = importlib.machinery.SourceFileLoader("public_release_audit_ci_under_test", str(module_path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader if spec else None)
+        old_user = os.environ.get("USER")
+        old_logname = os.environ.get("LOGNAME")
+        try:
+            os.environ["USER"] = "runner"
+            os.environ["LOGNAME"] = "runner"
+            module = importlib.util.module_from_spec(spec)
+            assert spec is not None and spec.loader is not None
+            spec.loader.exec_module(module)
+            markers = module.personal_markers()
+            self.assertNotIn("runner", markers)
+        finally:
+            if old_user is None:
+                os.environ.pop("USER", None)
+            else:
+                os.environ["USER"] = old_user
+            if old_logname is None:
+                os.environ.pop("LOGNAME", None)
+            else:
+                os.environ["LOGNAME"] = old_logname
+
 
 if __name__ == "__main__":
     unittest.main()

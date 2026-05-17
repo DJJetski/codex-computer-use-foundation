@@ -32,6 +32,19 @@ SURFACE_DENY_PARTS = {
     "__pycache__",
     ".pytest_cache",
 }
+GENERIC_ACCOUNT_MARKERS = {
+    "actions",
+    "admin",
+    "build",
+    "builder",
+    "ci",
+    "github",
+    "macos",
+    "root",
+    "runner",
+    "user",
+    "users",
+}
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -68,13 +81,18 @@ def git_files(include_untracked: bool) -> list[Path]:
 
 def personal_markers() -> list[str]:
     home = Path.home().resolve()
-    markers = {
-        str(home),
-        home.name,
-    }
+    markers = {str(home)}
+
+    def add_auto_marker(value: str | None) -> None:
+        if not value:
+            return
+        marker = value.strip()
+        if marker and marker.lower() not in GENERIC_ACCOUNT_MARKERS:
+            markers.add(marker)
+
+    add_auto_marker(home.name)
     for value in (os.environ.get("USER"), os.environ.get("LOGNAME"), getpass.getuser()):
-        if value:
-            markers.add(value)
+        add_auto_marker(value)
     for key in ("PUBLIC_RELEASE_AUDIT_EXTRA_MARKERS", "PUBLIC_AUDIT_EXTRA_MARKERS"):
         for value in (os.environ.get(key) or "").split(","):
             if value.strip():
@@ -84,7 +102,7 @@ def personal_markers() -> list[str]:
         if result.returncode == 0 and result.stdout.strip():
             value = result.stdout.strip()
             if value not in {PUBLIC_AUTHOR_NAME, PUBLIC_AUTHOR_EMAIL}:
-                markers.add(value)
+                add_auto_marker(value)
     return sorted(marker for marker in markers if marker and len(marker) >= 4)
 
 
@@ -188,6 +206,11 @@ def main() -> int:
     parser.add_argument("--include-untracked", action="store_true")
     parser.add_argument("--all-refs", action="store_true", help="scan all local refs instead of HEAD history")
     parser.add_argument(
+        "--skip-commit-identities",
+        action="store_true",
+        help="skip commit author/committer checks, for example on synthetic pull-request merge commits",
+    )
+    parser.add_argument(
         "--enforce-public-surface",
         action="store_true",
         help="also fail if generated public-release denylisted paths are present",
@@ -203,7 +226,8 @@ def main() -> int:
             findings.extend(scan_file(path, markers))
     if args.enforce_public_surface or (REPO_ROOT / PUBLIC_RELEASE_MANIFEST).is_file():
         findings.extend(scan_public_surface(files))
-    findings.extend(scan_commit_identities(refspec))
+    if not args.skip_commit_identities:
+        findings.extend(scan_commit_identities(refspec))
     findings.extend(scan_history_content(history_content_refs(args.all_refs), markers))
 
     if findings:
