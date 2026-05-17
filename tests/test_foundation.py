@@ -18,6 +18,11 @@ import unittest
 from pathlib import Path
 
 sys.dont_write_bytecode = True
+# Several tests build local, unpublished release packages from the active
+# working tree before the change under test is committed. Keep the production
+# default strict, but let those test subprocesses exercise package behavior
+# instead of failing early on the intentional dirty test checkout.
+os.environ.setdefault("CODEX_PUBLIC_RELEASE_ALLOW_DIRTY", "1")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1070,7 +1075,8 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue((package / "LICENSE").is_file())
             self.assertTrue((package / "SECURITY.md").is_file())
             self.assertTrue((package / "docs/WHAT-IS-COMPUTER-USE.md").is_file())
-            self.assertTrue((package / "docs/releases/v0.1.8.md").is_file())
+            self.assertTrue((package / "docs/CAPABILITY-PARITY.md").is_file())
+            self.assertTrue((package / "docs/releases/v0.1.9.md").is_file())
             self.assertTrue((package / ".github/FUNDING.yml").is_file())
             self.assertTrue((package / ".github/workflows/ci.yml").is_file())
             self.assertFalse((package / ".github/workflows/codeql.yml").exists())

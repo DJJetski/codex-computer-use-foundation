@@ -235,6 +235,7 @@ def scan_native_contract_consistency() -> list[str]:
     docs = [
         REPO_ROOT / "README.md",
         REPO_ROOT / "docs/WHAT-IS-COMPUTER-USE.md",
+        REPO_ROOT / "docs/CAPABILITY-PARITY.md",
         REPO_ROOT / "docs/ARCHITECTURE.md",
         REPO_ROOT / "src/skills/macos-computer-use/SKILL.md",
     ]
@@ -263,6 +264,23 @@ def scan_native_contract_consistency() -> list[str]:
         text = path.read_text(encoding="utf-8")
         if "fallback_used=false" not in text:
             findings.append(f"public docs do not state fallback_used=false boundary: {path.relative_to(REPO_ROOT)}")
+    parity = REPO_ROOT / "docs/CAPABILITY-PARITY.md"
+    parity_text = parity.read_text(encoding="utf-8")
+    for required in [
+        "https://developers.openai.com/codex/app/computer-use",
+        "https://openai.com/index/codex-for-almost-everything/",
+        "https://developers.openai.com/api/docs/guides/tools-computer-use",
+        "move",
+        "wait",
+        "screenshot",
+        "Little Snitch",
+        "Always Allow",
+        "Terminal",
+        "Codex itself",
+        "fallback_used=false",
+    ]:
+        if required not in parity_text:
+            findings.append(f"capability parity doc missing required term: {required}")
     return findings
 
 

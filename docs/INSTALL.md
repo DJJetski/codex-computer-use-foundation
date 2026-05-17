@@ -20,6 +20,9 @@ If you are deciding whether this package is relevant, start with
 official native Codex Computer Use route. It does not replace Computer Use with
 Haindy, `cliclick`, AppleScript, screenshots, Playwright, Keyboard Maestro, or
 another fallback automation stack.
+For an exact comparison with OpenAI's documented Codex app Computer Use
+capabilities and the native MCP tool surface this package verifies, see
+`docs/CAPABILITY-PARITY.md`.
 
 ## Install From A Checkout
 

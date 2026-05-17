@@ -105,6 +105,8 @@ Before publishing a public artifact:
 - Confirm README first screen explains what native Codex Computer Use is, why
   the native second-mouse path is different from fallback tools, and which
   failure modes this package repairs.
+- Confirm `docs/CAPABILITY-PARITY.md` still matches OpenAI's current Codex app
+  Computer Use docs and the live bundled plugin MCP surface.
 - Confirm `.github/FUNDING.yml` is either disabled or points only to a
   maintainer-approved non-personal voluntary donation channel.
 - Confirm GitHub CI is green on the release commit.

@@ -42,9 +42,9 @@ Playwright, and VPN must not be hidden inside the Computer Use MCP path.
 native Computer Use health evidence and must not be used to mask native MCP
 failures. It does not edit TCC databases, grant macOS permissions, bypass
 OpenAI or macOS safety checks, approve privacy, account, cloud, security,
-payment, TCC, password, or SecurityAgent dialogs, or count as native Computer
-Use success. Strong local-dialog approval requires both an allowlisted helper
-process and allowlisted routine-dialog text.
+payment, TCC, password, network/firewall, Little Snitch, or SecurityAgent
+dialogs, or count as native Computer Use success. Strong local-dialog approval
+requires both an allowlisted helper process and allowlisted routine-dialog text.
 
 This repository is for troubleshooting and stabilizing the official native
 Codex Computer Use route. It changes user-owned Codex runtime files under

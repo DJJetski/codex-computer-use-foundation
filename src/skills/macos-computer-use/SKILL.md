@@ -37,6 +37,10 @@ runtime lives in:
 the codex-computer-use-foundation source repository
 ```
 
+The source repository's `docs/CAPABILITY-PARITY.md` records the exact native
+MCP parity target, the mapping from OpenAI API Computer Use action names to
+Codex app MCP tool names, and the safety boundary for dialog automation.
+
 Runtime files are installed under `~/.codex`; install from the source checkout
 or downloaded package instead of hand-editing installed files. Do not move
 runtime paths out of `~/.codex` because Codex and the bundled Computer Use
@@ -499,6 +503,7 @@ ps -axo pid=,ppid=,command= | rg 'SkyComputerUseClient|SkyComputerUseService'
 tail -n 20 ~/.codex/logs/computer-use-guard.log.jsonl
 ```
 
-Detailed architecture and release verification docs live in the source
-repository. The installed skill intentionally contains only operational policy
-and does not install maintainer-only troubleshooting history.
+Detailed architecture, capability parity, and release verification docs live in
+the source repository. The installed skill intentionally contains only
+operational policy and does not install maintainer-only troubleshooting
+history.

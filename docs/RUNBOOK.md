@@ -7,6 +7,8 @@ fallback automation as the solution.
 
 If you need the non-operator explanation first, read
 `docs/WHAT-IS-COMPUTER-USE.md`.
+If you need to compare this package with OpenAI's documented Computer Use
+capabilities, read `docs/CAPABILITY-PARITY.md`.
 
 ## Normal Fresh-Thread Procedure
 
@@ -185,6 +187,19 @@ Do not run the forced variant while another active thread is in the middle of a
 native Computer Use task. `status` remains read-only. `ok=true` requires
 `mcp_client_ownership.ok=true`; duplicate `SkyComputerUseClient mcp` groups are
 treated as a real operational blocker, not a cosmetic diagnostic.
+
+## Background Use And Second Pointer Expectations
+
+Healthy native Computer Use can target an allowed app without relying on the
+frontmost app. The release smoke proves this by opening a local Safari page
+with `open -g`, targeting Safari by bundle id, and requiring native click and
+type evidence with `fallback_used=false`.
+
+Do not treat that proof as permission to use fallback automation, and do not
+overread it as a guarantee for minimized windows, invisible windows, off-Space
+windows, Terminal, Codex itself, administrator prompts, or
+security/privacy/network/firewall dialogs. Those remain outside the unattended
+native health contract.
 
 ## Backup Check
 

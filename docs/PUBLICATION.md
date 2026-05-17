@@ -161,7 +161,8 @@ The public repository can contain:
 - the canonical Computer Use skill in `src/skills/macos-computer-use/`
 - the Computer Use plugin MCP shim in `src/plugin-shim/computer-use/`
 - tests and verification scripts
-- public docs for install, architecture, runbook, migration, and release
+- public docs for install, architecture, runbook, migration, release, and
+  native capability parity
 
 Neither the repository nor the generated public release should contain app
 bundles, live Codex state, rollback snapshots, secrets, private maintainer

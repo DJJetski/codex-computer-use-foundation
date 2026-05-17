@@ -11,6 +11,8 @@
   &nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="docs/RUNBOOK.md">Runbook</a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="docs/CAPABILITY-PARITY.md">Parity</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="SECURITY.md">Security</a>
 </p>
 
@@ -112,9 +114,11 @@ This project does not replace Codex and does not modify
 `/Applications/Codex.app`.
 
 It does not grant macOS permissions, edit TCC databases, approve privacy
-dialogs, change account settings, install VPN routing, upload local state, or
-hide AppleScript, Accessibility scripting, screenshots, Playwright, Keyboard
-Maestro, Haindy, or `cliclick` inside the native Computer Use MCP path.
+dialogs, approve security prompts, approve network/firewall or Little Snitch
+decisions unattended, change account settings, install VPN routing, upload
+local state, or hide AppleScript, Accessibility scripting, screenshots,
+Playwright, Keyboard Maestro, Haindy, or `cliclick` inside the native Computer
+Use MCP path.
 
 It is for troubleshooting and stabilizing native Computer Use routing. It is
 not a way to bypass OpenAI usage policies, OpenAI safety checks, macOS privacy
@@ -206,6 +210,7 @@ Then retry from a fresh Codex thread.
 | Start Here | Details |
 | --- | --- |
 | [`docs/WHAT-IS-COMPUTER-USE.md`](docs/WHAT-IS-COMPUTER-USE.md) | What native Codex Computer Use is and what this project repairs |
+| [`docs/CAPABILITY-PARITY.md`](docs/CAPABILITY-PARITY.md) | Exact native MCP parity target, API action-name mapping, background-use proof, and dialog boundaries |
 | [`docs/INSTALL.md`](docs/INSTALL.md) | Clone, install, verify, update, uninstall, and rollback steps |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Troubleshooting commands for missing tools, timeouts, and stale smoke |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the installer, guard, launcher, and plugin route fit together |

@@ -11,6 +11,8 @@ intact and proves it with native tool calls.
 
 For a user-facing explanation of Computer Use, native verification, and
 native-versus-fallback boundaries, see `docs/WHAT-IS-COMPUTER-USE.md`.
+For the exact upstream capability parity contract and API-action mapping, see
+`docs/CAPABILITY-PARITY.md`.
 
 ## Why Native Computer Use Is The Target
 
@@ -256,6 +258,11 @@ UI, scroll unknown app content, or set values in user apps just to prove install
 health. Full tool-surface parity is checked with native `tools/list`; the smoke
 then proves that the official route can perform safe real GUI actions without
 fallback automation.
+
+This non-frontmost Safari proof is deliberately narrower than a claim that
+Codex can operate any minimized, invisible, off-Space, Terminal, Codex, admin,
+security, privacy, network, or firewall UI. Those boundaries follow OpenAI's
+Computer Use app guidance and remain explicit operator territory.
 
 Duplicate native MCP clients under one Codex AppServer parent are fail-closed
 health evidence. The guard cleans orphaned clients automatically. Full

@@ -9,6 +9,8 @@ Codex. On macOS it is exposed through the bundled Computer Use plugin and its
 MCP server, backed by the OpenAI native Computer Use client.
 
 This repository is a repair and validation system for that native path.
+For the exact parity target, official-source summary, API action-name mapping,
+and dialog operator boundary, see `docs/CAPABILITY-PARITY.md`.
 
 ## Native Computer Use In Plain English
 
@@ -207,6 +209,11 @@ The guard's live native smoke may still show Codex's native second pointer
 while it proves the official route. That is different from a coordinate script:
 the proof targets Safari by bundle id through `computer-use` tools and requires
 `fallback_used=false`.
+
+The smoke proves non-frontmost native app action. It does not claim arbitrary
+control of minimized windows, invisible windows, off-Space windows, Terminal,
+Codex itself, administrator prompts, or security/privacy/network/firewall
+dialogs.
 
 ### Does this help when Codex cannot click, type, scroll, drag, or press keys on my Mac?
 
