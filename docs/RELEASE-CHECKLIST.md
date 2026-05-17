@@ -134,9 +134,9 @@ Recommended GitHub repository settings before a public release:
   before making the repository public.
 - Enable secret scanning and push protection where available.
 - Enable Dependabot alerts.
-- Protect `main` with pull request review, required `Release safety` CI,
-  required conversation resolution, deletion protection, and force-push
-  protection before publishing a release from that branch.
+- For the solo-maintainer workflow, keep direct maintainer pushes possible.
+  Prefer local checks, GitHub `Release safety` CI, deletion protection, and
+  force-push protection over mandatory second-person review.
 - Consider CodeQL/code scanning after confirming the repository visibility and
   plan support it.
 - Use an annotated release tag at the audited commit. If the tag is unsigned,

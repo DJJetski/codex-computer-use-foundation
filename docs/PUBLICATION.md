@@ -15,18 +15,14 @@ and validate that native path, not to advertise a separate automation framework.
 
 The GitHub repository page should be easy to understand before it becomes
 technical. Start the README with the text heading `Codex Computer Use
-Foundation`, the short description, and the navigation links. Do not put a
-duplicated hero image above that heading.
+Foundation`, the short description, navigation links, and a copy-pasteable
+install path. Do not put hero images, SVG diagrams, release cards, or other
+design-heavy assets on the repo page.
 
-Visual assets should follow the dark technical style used by this project, but
-they must remain readable at GitHub's rendered width. Keep text on calm
-background panels, use balanced spacing, keep labels inside their boxes, and
-prefer clear plain-language copy over internal status terms. Do not ship SVGs
-with clipped text, asymmetric card padding, or tiny badge strings that explain
-implementation details before the user understands the problem.
-
-The first public diagram is for users, not maintainers. Its flow should end in
-using Codex Computer Use again, not in "release" or packaging language.
+The first public screen is for users, not maintainers. It should describe
+native Computer Use missing or failing, local repair, verification, and the
+fresh-thread check. Keep packaging and publication language in maintainer-only
+sections.
 
 ## GitHub Release Readiness
 

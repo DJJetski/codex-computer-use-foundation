@@ -37,6 +37,7 @@ STATE_DIR = CODEX_HOME / "state" / "computer-use-guard"
 STATUS_SNAPSHOT = STATE_DIR / "last-status.json"
 NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke.json"
 UNVERIFIED_NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke-unverified.json"
+CODEX_APP_PATH_STATE = STATE_DIR / "codex-app-path"
 NATIVE_SMOKE_MAX_AGE_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_MAX_AGE_SECONDS", "900"))
 NATIVE_SMOKE_TIMEOUT_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_TIMEOUT_SECONDS", "120"))
 DUPLICATE_MCP_GRACE_SECONDS = int(os.environ.get("CODEX_CU_DUPLICATE_MCP_GRACE_SECONDS", "30"))
@@ -61,7 +62,20 @@ LSREGISTER = Path(
     "LaunchServices.framework/Support/lsregister"
 )
 
-OPENAI_CODEX_APP = Path(os.environ.get("CODEX_CU_CODEX_APP", "/Applications/Codex.app")).expanduser()
+def _configured_codex_app_path() -> Path:
+    env_path = os.environ.get("CODEX_CU_CODEX_APP", "").strip()
+    if env_path:
+        return Path(env_path).expanduser()
+    try:
+        state_path = CODEX_APP_PATH_STATE.read_text(encoding="utf-8").strip()
+    except Exception:
+        state_path = ""
+    if state_path:
+        return Path(state_path).expanduser()
+    return Path("/Applications/Codex.app")
+
+
+OPENAI_CODEX_APP = _configured_codex_app_path()
 OPENAI_CODEX_EXEC = OPENAI_CODEX_APP / "Contents" / "Resources" / "codex"
 OPENAI_CODEX_BUNDLE_ID = "com.openai.codex"
 WAVES_CODEX_BUNDLE_ID = "com.WavesAudio.CODEX"
@@ -185,6 +199,18 @@ def _verify_openai_codex_app() -> str:
             f"{OPENAI_CODEX_APP} has bundle id {bundle_id}, expected {OPENAI_CODEX_BUNDLE_ID}"
         )
     return bundle_id
+
+
+def _ensure_codex_app_path_state() -> bool:
+    desired = str(OPENAI_CODEX_APP)
+    current = CODEX_APP_PATH_STATE.read_text(encoding="utf-8").strip() if CODEX_APP_PATH_STATE.exists() else ""
+    if current == desired:
+        return False
+    CODEX_APP_PATH_STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CODEX_APP_PATH_STATE.with_name(CODEX_APP_PATH_STATE.name + f".tmp-{os.getpid()}")
+    tmp.write_text(desired + "\n", encoding="utf-8")
+    os.replace(tmp, CODEX_APP_PATH_STATE)
+    return True
 
 
 def _log(level: str, message: str, **fields: Any) -> None:
@@ -918,6 +944,7 @@ def _write_bootstrap_assets() -> bool:
 def _launch_agent_payload() -> dict[str, Any]:
     return {
         "Label": LAUNCH_AGENT_LABEL,
+        "EnvironmentVariables": {"CODEX_CU_CODEX_APP": str(OPENAI_CODEX_APP)},
         "ProgramArguments": [str(BOOTSTRAP), "ensure-config", "--quiet"],
         "RunAtLoad": True,
         "StartInterval": LAUNCH_AGENT_START_INTERVAL_SECONDS,
@@ -1136,7 +1163,11 @@ if [[ "${CODEX_CU_LAUNCHER_SKIP_GUARD:-}" != "1" ]]; then
   fi
 fi
 
-codex_app="${CODEX_CU_CODEX_APP:-/Applications/Codex.app}"
+codex_app="${CODEX_CU_CODEX_APP:-}"
+if [[ -z "$codex_app" && -r "$HOME/.codex/state/computer-use-guard/codex-app-path" ]]; then
+  IFS= read -r codex_app < "$HOME/.codex/state/computer-use-guard/codex-app-path" || true
+fi
+codex_app="${codex_app:-/Applications/Codex.app}"
 native_candidates=(
   "$HOME/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
   "$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
@@ -1635,15 +1666,20 @@ def _kill_pid(pid: int) -> bool:
     return not alive()
 
 
-def cleanup_stale_mcp_clients(*, kill_duplicates: bool = False) -> dict[str, Any]:
+def cleanup_stale_mcp_clients(
+    *,
+    kill_duplicates: bool = False,
+    respect_duplicate_grace: bool = True,
+) -> dict[str, Any]:
     """Keep stale native MCP clients from poisoning later Codex tool sessions.
 
     Codex can leave old SkyComputerUseClient MCP servers behind after a tool
     timeout or thread interruption. Multiple resident MCP clients under one
     Codex app-server parent can also be legitimate when several Codex threads
-    are open, so this function only removes orphaned clients by default. Forced
-    duplicate killing is reserved for explicit diagnostics because it can close
-    the active MCP transport of a running thread.
+    are open, so this function only removes orphaned clients by default. Full
+    ensure is allowed to collapse duplicate groups by keeping the newest client
+    per parent, because duplicate native transports have proven to make fresh
+    Computer Use sessions unreliable across restarts.
     """
     matches = [
         (pid, ppid, command)
@@ -1679,7 +1715,7 @@ def cleanup_stale_mcp_clients(*, kill_duplicates: bool = False) -> dict[str, Any
                 if pid == newest_pid:
                     continue
                 age = ages.get(pid)
-                if age is not None and age < DUPLICATE_MCP_GRACE_SECONDS:
+                if respect_duplicate_grace and age is not None and age < DUPLICATE_MCP_GRACE_SECONDS:
                     skipped_young.append(pid)
                     continue
                 if _kill_pid(pid):
@@ -1689,6 +1725,7 @@ def cleanup_stale_mcp_clients(*, kill_duplicates: bool = False) -> dict[str, Any
         "killed": killed,
         "skipped_young": skipped_young,
         "duplicate_grace_seconds": DUPLICATE_MCP_GRACE_SECONDS,
+        "respect_duplicate_grace": respect_duplicate_grace,
     }
 
 
@@ -1717,12 +1754,19 @@ def mcp_client_ownership_status() -> dict[str, Any]:
     for process in processes:
         by_parent.setdefault(str(process["ppid"]), []).append(int(process["pid"]))
     duplicate_parents = {ppid: pids for ppid, pids in by_parent.items() if len(pids) > 1}
+    active_duplicate_groups = {
+        ppid: pids
+        for ppid, pids in duplicate_parents.items()
+        if ppid not in {"0", "1"}
+    }
     return {
         "ok": not duplicate_parents,
         "running": len(processes),
         "processes": processes,
         "duplicate_parents": duplicate_parents,
-        "expected": "ok=true requires no duplicate native MCP clients under one Codex app-server parent; full ensure cleans orphaned clients but does not kill active duplicate transports unless cleanup-mcp-clients --force-duplicates is run explicitly",
+        "active_duplicate_parents": active_duplicate_groups,
+        "requires_operator_cleanup": bool(active_duplicate_groups),
+        "expected": "ok=true requires no duplicate native MCP clients under one Codex app-server parent; full ensure keeps the newest client per parent and removes older duplicate native transports",
     }
 
 
@@ -2388,6 +2432,46 @@ def _health_layers(
     }
 
 
+def _operational_state(
+    *,
+    structural_ok: bool,
+    health_layers: dict[str, Any],
+    native_smoke: dict[str, Any],
+    ownership: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    if bool(health_layers.get("operational")):
+        return {
+            "state": "native_computer_use_ready",
+            "next_step": "Open or continue a Codex thread and use native mcp__computer_use__ tools.",
+        }
+    if not structural_ok:
+        return {
+            "state": "repair_incomplete",
+            "next_step": "Run codex-computer-use-guard ensure and inspect the failed structural layer.",
+        }
+    if not bool(health_layers.get("runtime_ready")):
+        return {
+            "state": "runtime_not_ready",
+            "next_step": "Run full ensure and inspect runtime, service, and MCP discovery fields.",
+        }
+    failure_class = str(native_smoke.get("failure_class") or "")
+    if failure_class in {"no_native_smoke_record", "stale_native_smoke"}:
+        return {
+            "state": "structural_ok_needs_fresh_native_smoke",
+            "next_step": "Run codex-computer-use-guard ensure, then use tool_search or a fresh Codex thread for native Computer Use discovery.",
+        }
+    ownership = ownership or {}
+    if not bool(health_layers.get("mcp_client_ownership")) and ownership.get("duplicate_parents"):
+        return {
+            "state": "structural_ok_duplicate_mcp_clients",
+            "next_step": "Run codex-computer-use-guard ensure to collapse duplicate native MCP clients, then retry from a fresh Codex thread.",
+        }
+    return {
+        "state": "structural_ok_native_smoke_failed",
+        "next_step": "Inspect native_smoke.failure_class, run full ensure, and use a fresh Codex thread after repair is green.",
+    }
+
+
 def ensure_mcp_native_config(cache_root: Path) -> bool:
     path = cache_root / ".mcp.json"
     try:
@@ -2810,6 +2894,7 @@ def ensure_config(cache_root: Path) -> bool:
 
 def ensure() -> dict[str, Any]:
     app_bundle_id = _verify_openai_codex_app()
+    codex_app_path_state_changed = _ensure_codex_app_path_state()
     if not COMPUTER_USE_SOURCE.is_dir():
         raise RuntimeError(f"missing app-bundled computer-use plugin: {COMPUTER_USE_SOURCE}")
     LOCK.parent.mkdir(parents=True, exist_ok=True)
@@ -2904,9 +2989,13 @@ def ensure() -> dict[str, Any]:
         "killed": [],
         "skipped_young": [],
         "duplicate_grace_seconds": DUPLICATE_MCP_GRACE_SECONDS,
+        "respect_duplicate_grace": True,
     }
     if runtime_ready:
-        post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=False)
+        post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(
+            kill_duplicates=True,
+            respect_duplicate_grace=False,
+        )
         ownership = mcp_client_ownership_status()
     health_layers = _health_layers(
         configured=configured,
@@ -2915,15 +3004,24 @@ def ensure() -> dict[str, Any]:
         native_smoke=native_smoke,
         ownership=ownership,
     )
+    operational_state = _operational_state(
+        structural_ok=runtime_ready,
+        health_layers=health_layers,
+        native_smoke=native_smoke,
+        ownership=ownership,
+    )
     status = {
         "ok": health_layers["operational"],
         "structural_ok": runtime_ready,
         "health_layers": health_layers,
+        "operational_state": operational_state,
         "native_smoke": native_smoke,
         "native_smoke_refreshed": native_smoke_refreshed,
         "native_smoke_refresh_error": native_smoke_refresh_error,
         "mcp_client_ownership": ownership,
         "openai_codex_app": str(OPENAI_CODEX_APP),
+        "codex_app_path_state": str(CODEX_APP_PATH_STATE),
+        "codex_app_path_state_changed": codex_app_path_state_changed,
         "openai_codex_bundle_id": app_bundle_id,
         "version": version,
         "cache_root": str(cache_root),
@@ -3014,6 +3112,7 @@ def ensure() -> dict[str, Any]:
         or stale_notify_cleanup.get("killed")
         or launch_agent_changed
         or launch_services_registered
+        or codex_app_path_state_changed
     ):
         _log("info", "computer-use repaired", **status)
     return status
@@ -3135,13 +3234,22 @@ def status() -> dict[str, Any]:
         native_smoke=native_smoke,
         ownership=ownership,
     )
+    operational_state = _operational_state(
+        structural_ok=runtime_ready,
+        health_layers=health_layers,
+        native_smoke=native_smoke,
+        ownership=ownership,
+    )
     return {
         "ok": health_layers["operational"],
         "structural_ok": runtime_ready,
         "health_layers": health_layers,
+        "operational_state": operational_state,
         "native_smoke": native_smoke,
         "mcp_client_ownership": ownership,
         "openai_codex_app": str(OPENAI_CODEX_APP),
+        "codex_app_path_state": str(CODEX_APP_PATH_STATE),
+        "codex_app_path_state_exists": CODEX_APP_PATH_STATE.is_file(),
         "openai_codex_bundle_id": app_bundle_id,
         "version": version,
         "cache_valid": cache_valid,
@@ -3232,7 +3340,10 @@ def main(argv: list[str]) -> int:
             if force_duplicates:
                 os.environ["CODEX_CU_FORCE_KILL_DUPLICATE_MCP"] = "1"
             before = mcp_client_ownership_status()
-            cleanup = cleanup_stale_mcp_clients(kill_duplicates=force_duplicates)
+            cleanup = cleanup_stale_mcp_clients(
+                kill_duplicates=force_duplicates,
+                respect_duplicate_grace=not force_duplicates,
+            )
             after = mcp_client_ownership_status()
             payload = {
                 "ok": True,
@@ -3254,6 +3365,7 @@ def main(argv: list[str]) -> int:
             LOCK.parent.mkdir(parents=True, exist_ok=True)
             ensure_config_lock_fh = LOCK.open("w", encoding="utf-8")
             fcntl.flock(ensure_config_lock_fh.fileno(), fcntl.LOCK_EX)
+            codex_app_path_state_changed = _ensure_codex_app_path_state()
             patched_marketplace_changed = ensure_patched_bundled_marketplace()
             tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
             version, cache_root, cache_changed = ensure_cache()
@@ -3302,14 +3414,23 @@ def main(argv: list[str]) -> int:
                 native_smoke=native_smoke,
                 ownership=ownership,
             )
+            operational_state = _operational_state(
+                structural_ok=structural_ok,
+                health_layers=health_layers,
+                native_smoke=native_smoke,
+                ownership=ownership,
+            )
             payload = {
                 "ok": all(health_layers.values()),
                 "structural_ok": structural_ok,
                 "health_layers": health_layers,
+                "operational_state": operational_state,
                 "native_smoke": native_smoke,
                 "mcp_client_ownership": ownership,
                 "command": command,
                 "version": version,
+                "codex_app_path_state": str(CODEX_APP_PATH_STATE),
+                "codex_app_path_state_changed": codex_app_path_state_changed,
                 "cache_root": str(cache_root),
                 "cache_changed": cache_changed,
                 "runtime_install_changed": runtime_install_changed,

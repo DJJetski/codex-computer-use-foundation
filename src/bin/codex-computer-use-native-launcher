@@ -9,7 +9,11 @@ if [[ "${CODEX_CU_LAUNCHER_SKIP_GUARD:-}" != "1" ]]; then
   fi
 fi
 
-codex_app="${CODEX_CU_CODEX_APP:-/Applications/Codex.app}"
+codex_app="${CODEX_CU_CODEX_APP:-}"
+if [[ -z "$codex_app" && -r "$HOME/.codex/state/computer-use-guard/codex-app-path" ]]; then
+  IFS= read -r codex_app < "$HOME/.codex/state/computer-use-guard/codex-app-path" || true
+fi
+codex_app="${codex_app:-/Applications/Codex.app}"
 native_candidates=(
   "$HOME/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"
   "$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient"

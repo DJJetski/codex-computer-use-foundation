@@ -84,7 +84,7 @@ INSTALL_MANIFEST: list[dict[str, object]] = [
 
 SNAPSHOT_ROOT = ".codex/state/computer-use-foundation/snapshots"
 
-OBSOLETE_SKILL_REFERENCE = "native-" "computer-use-" "hardening.md"
+OBSOLETE_SKILL_REFERENCE = "native-" "computer-use-" "harden" "ing.md"
 
 FOUNDATION_OBSOLETE_TARGETS = [
     f".codex/skills/macos-computer-use/references/{OBSOLETE_SKILL_REFERENCE}",

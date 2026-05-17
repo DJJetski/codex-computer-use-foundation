@@ -1,9 +1,7 @@
 <h1 align="center">Codex Computer Use Foundation</h1>
 
 <p align="center">
-  <strong>Fix native OpenAI Codex Computer Use when it is missing or broken on macOS.</strong><br />
-  Use this when Codex opens normally, but Computer Use tools do not appear,
-  time out, or cannot control Mac apps.
+  <strong>Repair native OpenAI Codex Computer Use on macOS when tools are missing, hidden, timing out, or unable to click and type.</strong>
 </p>
 
 <p align="center">
@@ -16,246 +14,150 @@
   <a href="SECURITY.md">Security</a>
 </p>
 
-<p align="center">
-  <img src="assets/foundation-overview.svg" alt="Computer Use Foundation explains the problem, repairs the official Codex Computer Use plugin path, verifies native control, and gets Codex ready to use Computer Use again." width="1200" height="660" />
-</p>
+## What This Is
 
-## Why This Exists
+Codex Computer Use Foundation is a macOS repair and validation kit for the
+official native OpenAI Codex Computer Use path.
 
-Codex Computer Use should let Codex inspect the Mac desktop, list apps, click,
-type, scroll, drag, and press keys through the official native OpenAI Computer
-Use plugin.
+Use it when Codex is installed, but native Computer Use does not appear in a
+fresh thread, `mcp__computer_use__` is missing, Computer Use tools time out, or
+Codex cannot control Mac apps through native tools such as `list_apps`,
+`get_app_state`, `click`, `type_text`, `press_key`, `scroll`, or `drag`.
 
-On some Macs that native path breaks. Codex itself may still launch, but the
-Computer Use tools are missing, hidden, timing out, returning transport errors,
-or failing in fresh threads. The result is confusing: Codex looks installed,
-but it cannot actually control apps through native Computer Use.
-
-Codex Computer Use Foundation repairs that local Codex routing and validates
-that the official native path works again. It does not replace Codex, patch the
-Codex app bundle, bypass macOS privacy permissions, or hide AppleScript,
-screenshots, browser automation, Keyboard Maestro, `cliclick`, or VPN as fake
-Computer Use.
-
-## What This Project Does
-
-| Step | Plain-English Result |
-| --- | --- |
-| Detect | Finds broken Computer Use discovery, disabled bundled plugin state, stale clients, bad shims, and duplicate MCP routing. |
-| Repair | Restores the official Codex Computer Use plugin path under the current user's `$HOME/.codex`. |
-| Verify | Proves native Computer Use works with fresh evidence, instead of trusting config that merely looks correct. |
-| Use Again | Leaves Codex ready to use native Computer Use after the repair passes verification. |
-| Keep Boundaries Clear | Keeps fallback automation separate so users know whether they are using real native Codex Computer Use. |
-
-## Common Search Terms
-
-This project is meant for failures people describe as "Codex Computer Use not
-working on macOS", "OpenAI Codex Computer Use missing", "Computer Use tools not
-showing up", "Codex cannot click or type", "Codex can see the screen but cannot
-control the app", "Codex MCP Computer Use not found", "`computer_use` tools
-missing", `mcp__computer_use__` missing, `tool_search` not exposing
-`computer-use`, `SkyComputerUseClient mcp` timing out, `Transport closed`,
-`procNotFound`, stale native smoke, duplicate native MCP clients, or native
-Computer Use failing after a Codex, plugin, or macOS update.
+This can help both machines where Computer Use worked before and machines where
+native Computer Use has never worked after installing Codex.
 
 ## Quick Install
 
-Preview the install first:
-
 ```bash
+git clone https://github.com/DJJetski/codex-computer-use-foundation.git
+cd codex-computer-use-foundation
 scripts/install.py --dry-run
-```
-
-Install foundation-owned files under `$HOME/.codex` and run full native
-validation:
-
-```bash
 scripts/install.py --yes --full-ensure
-```
-
-Verify the installed runtime:
-
-```bash
 scripts/verify-live-state.py --expect-installed-from-repo --require-operational --json
 ```
 
-Install instructions for the GitHub release tarball are in
-[`docs/INSTALL.md`](docs/INSTALL.md).
+If Codex is not installed at `/Applications/Codex.app`, pass the app path once:
 
-## What Computer Use Is
+```bash
+scripts/install.py --yes --full-ensure --codex-app /path/to/Codex.app
+```
 
-Computer Use lets Codex inspect and operate a real Mac GUI through tools such
-as app listing, app-state inspection, clicking, typing, scrolling, dragging,
-and key presses.
+The installer persists that validated Codex app path for later Codex restarts
+and Mac reboots.
 
-Native Codex Computer Use is the official OpenAI Computer Use plugin path for
-Codex on macOS. Instead of moving the user's visible pointer or replaying
-brittle coordinates, Codex talks to the native Computer Use MCP server. That
-native server keeps the Codex AppServer, AppleEvent, and Mach rendezvous needed
-for real Mac control.
+## Symptoms This Helps With
 
-For maintainers, the verification checks require fresh native GUI evidence
-from the Codex MCP context. That keeps the project honest: a fallback script
-does not count as native Computer Use.
+People usually find this project while searching for:
 
-For a plain-language overview, read
-[`docs/WHAT-IS-COMPUTER-USE.md`](docs/WHAT-IS-COMPUTER-USE.md).
+- OpenAI Codex Computer Use not working on macOS
+- Codex Computer Use tools missing
+- `mcp__computer_use__` not showing up
+- `computer-use@openai-bundled` disabled or not discoverable
+- Codex cannot click, type, scroll, drag, or press keys
+- `SkyComputerUseClient mcp` timeout
+- `Transport closed` or `procNotFound`
+- Computer Use fails after a Codex, plugin, or macOS update
+- fresh Codex thread does not expose native Computer Use tools
 
-## What This Repairs
+## What It Repairs
 
-Native Computer Use does not work out of the box on every Mac. This package
-targets the failures people hit in real Codex sessions:
-
-- `computer-use@openai-bundled` is disabled or not discoverable.
-- Fresh threads do not expose `mcp__computer_use__` until `tool_search`
-  lazy-loads it.
-- `list_apps`, `get_app_state`, `click`, `type_text`, `press_key`, `scroll`,
-  or `drag` are unavailable.
-- Native calls hang, time out, return `Transport closed`, or lose the MCP
-  transport.
-- Local marketplace or plugin-cache routing points at the wrong command.
-- Direct `[mcp_servers.computer-use*]` aliases create duplicate native clients.
-- Stale `SkyComputerUseClient mcp` processes poison new tool calls.
-- The native launcher starts the client as a child process and loses
-  rendezvous.
-- Runtime copies, LaunchServices registration, helper prompts, or Codex/macOS
-  compatibility drift block first-use flows.
-
-It does not patch `/Applications/Codex.app`, bypass macOS privacy permissions,
-install VPN routing, add hidden GUI fallbacks, or upload local state.
-
-## Native Path, Not Fallback Automation
-
-Tools such as Haindy, `cliclick`, AppleScript, Accessibility scripting,
-Keyboard Maestro, screenshots, browser automation, and Playwright can be useful
-operator paths for specific tasks. They are not the same thing as native Codex
-Computer Use.
-
-Native Computer Use is better for Codex-first work because it is discoverable
-as Codex MCP tools, uses the official OpenAI client, preserves the native
-rendezvous, inspects app state through the Computer Use channel, and produces
-machine-readable health evidence.
-
-Fallback tools remain valuable when the user explicitly chooses a fallback
-operator path. This package does not hide them inside the native MCP route and
-does not count them as native success.
-
-## What Gets Installed
-
-The source repo is the source of truth. `$HOME/.codex` is the installed
-runtime. Run the installer instead of hand-editing live files.
-
-| Installed Path | Purpose |
+| Area | Result |
 | --- | --- |
-| `$HOME/.codex/bin/codex-computer-use-guard` | Repairs config, marketplace, plugin cache, runtime copy, LaunchAgents, process ownership, and health evidence. |
-| `$HOME/.codex/bin/codex-computer-use-native-launcher` | Fast preflight repair, then `exec`s the official patched `SkyComputerUseClient mcp` in the same process. |
-| `$HOME/.codex/bin/codex-computer-use-native-smoke` | Compatibility entrypoint for guard-owned native smoke. |
-| `$HOME/.codex/bin/codex-computer-use-preflight` | Read-only health preflight before GUI work. |
-| `$HOME/.codex/bin/codex-computer-use-notify` | Fail-open notification wrapper with stale helper cleanup. |
-| `$HOME/.codex/bin/codex-dialog-autopilot` | Separate narrow local dialog helper for routine allow/OK/helper/firewall prompts. Not native Computer Use. |
-| `$HOME/.codex/skills/macos-computer-use/SKILL.md` | The one visible Computer Use skill users and agents should load. |
-| `$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use/.mcp.json` | Plugin MCP shim that routes Codex plugin loading to the native launcher. |
+| Plugin discovery | Keeps the bundled `computer-use@openai-bundled` plugin enabled and discoverable. |
+| MCP routing | Routes the Computer Use plugin to the native launcher and removes duplicate direct MCP aliases. |
+| Native launcher | Uses `exec` so `SkyComputerUseClient mcp` keeps the Codex AppServer, AppleEvent, and Mach rendezvous context. |
+| Runtime state | Repairs local marketplace mirrors, plugin cache, runtime copy, LaunchServices registration, and stale native client processes. |
+| Persistence | Installs a user LaunchAgent and bootstrap backup so structural repair runs after Codex rewrites, Codex restarts, and Mac reboots. |
+| Verification | Requires fresh native smoke evidence before reporting full operational health. |
+| Boundaries | Keeps fallback automation separate from native Computer Use success. |
 
-Generated local state includes guard status, fresh native smoke evidence,
-rollback snapshots, LaunchAgents, bootstrap backups, marketplace mirrors,
-plugin cache repair, and a LaunchServices runtime copy. These are machine-local
-and must not be published.
+## What It Does Not Do
 
-## Skills And Discovery
+This project does not replace Codex and does not modify
+`/Applications/Codex.app`.
 
-This package installs one human-facing skill:
+It does not grant macOS permissions, edit TCC databases, approve privacy
+dialogs, change account settings, install VPN routing, upload local state, or
+hide AppleScript, Accessibility scripting, screenshots, Playwright, Keyboard
+Maestro, Haindy, or `cliclick` inside the native Computer Use MCP path.
 
-```text
-$HOME/.codex/skills/macos-computer-use/SKILL.md
-```
+It is for troubleshooting and stabilizing native Computer Use routing. It is
+not a way to bypass OpenAI usage policies, OpenAI safety checks, macOS privacy
+controls, account protections, or third-party security controls.
 
-The bundled Computer Use plugin still provides the MCP server, but its
-duplicate plugin `skills/` entry is suppressed. Users should see one clear
-Computer Use skill, not a plugin shim plus a local skill competing with each
-other.
+## Safety And Privacy
 
-Fresh threads may not show `mcp__computer_use__` immediately. That can be
-normal lazy loading. The correct first move is:
+The runtime installs into the current user's `$HOME/.codex` because that is the
+layout Codex uses for local plugins, skills, and MCP metadata. The repo is the
+source of truth; `$HOME/.codex` is the installed runtime.
 
-```text
-tool_search: computer-use list_apps get_app_state click type_text press_key
-```
+Rollback snapshots and live verifier output can contain local paths and config
+state. Do not post raw `$HOME/.codex` files, rollback snapshots, smoke JSON, or
+full local verifier output in public issues. `snapshot-live-state.py` and
+`verify-live-state.py --json` redact local home paths by default.
 
-If the namespace appears, prove native operation with
-`mcp__computer_use__.list_apps`. If it still does not appear, run the guard
-repair path before choosing any fallback.
+On some macOS/Codex combinations, a local copied Computer Use runtime under
+`$HOME/.codex` may need an explicitly enabled Swift compatibility repair after
+the native runtime probe proves it is necessary. That compatibility path leaves
+the original OpenAI Codex app bundle untouched and is documented in
+[`docs/INSTALL.md`](docs/INSTALL.md) and [`SECURITY.md`](SECURITY.md).
 
-## Verification Contract
+## How Verification Works
 
-Native Computer Use is considered operational for the current Mac, current user
-profile, and current Codex/macOS versions when the installed guard reports
-`ok=true` with fresh native smoke. This package repairs and validates known
-native routing failures; it cannot promise that future Codex or macOS releases
-will never introduce new failures.
+The guard reports full success only when the current Mac, current user profile,
+and current Codex/macOS versions have fresh native evidence.
 
-Full success requires:
+Full health requires:
 
-- `configured=true`
-- `discoverable=true`
-- `runtime_ready=true`
-- `mcp_client_ownership=true`
-- `appserver_rendezvous=true`
-- `operational=true`
-- `second_mouse_verified=true`
+- repaired structural routing
+- native Computer Use tools discoverable
+- no duplicate native MCP client ownership conflict
+- native runtime ready
 - fresh native smoke from the Codex MCP context
-- `fallback_used=false`
+- fallback automation not used
 
-If `status` later reports `ok=false` only because
-`failure_class=stale_native_smoke`, that is fail-closed behavior, not a
-regression. Run:
+If structural repair is healthy but native smoke is missing or stale, the guard
+fails closed and tells you to run full `ensure`, use `tool_search`, or open a
+fresh Codex thread.
+
+## Fresh Thread Check
+
+After install, open a fresh Codex thread. If native tools are not visible yet,
+ask Codex to search for:
+
+```text
+computer-use list_apps get_app_state click type_text press_key
+```
+
+If `mcp__computer_use__` appears, prove the native path with:
+
+```text
+mcp__computer_use__.list_apps
+```
+
+If tools are still absent, run:
 
 ```bash
 $HOME/.codex/bin/codex-computer-use-guard ensure
 ```
 
-## Public Release Package
-
-Build a sanitized public release tree and tarball:
-
-```bash
-scripts/build-public-release.py
-```
-
-The generated tree under `var/public-release/` excludes internal forensic
-notes, troubleshooting history, local state, snapshots, app bundles, tokens,
-cookies, OAuth data, and raw smoke JSON. It contains the installable runtime
-source, public docs, tests, and release tooling needed by a consumer. Release
-builds default to tracked files only, normalize tar metadata, and write a
-SHA256 sidecar for the tarball.
-
-Test the package like a downloaded release:
-
-```bash
-scripts/release-drill.py
-```
-
-Maintainer-only live proof, which destructively uninstalls and reinstalls
-foundation-owned runtime state in the target home:
-
-```bash
-scripts/release-drill.py --live --yes
-```
+Then retry from a fresh Codex thread.
 
 ## Documentation
 
-| Start Here | Release And Safety |
+| Start Here | Details |
 | --- | --- |
-| [`docs/WHAT-IS-COMPUTER-USE.md`](docs/WHAT-IS-COMPUTER-USE.md) | [`docs/RELEASE-CHECKLIST.md`](docs/RELEASE-CHECKLIST.md) |
-| [`docs/INSTALL.md`](docs/INSTALL.md) | [`docs/PUBLICATION.md`](docs/PUBLICATION.md) |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | [`SECURITY.md`](SECURITY.md) |
-| [`docs/CURRENT-STATE.md`](docs/CURRENT-STATE.md) | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | [`AGENTS.md`](AGENTS.md) |
+| [`docs/WHAT-IS-COMPUTER-USE.md`](docs/WHAT-IS-COMPUTER-USE.md) | What native Codex Computer Use is and what this project repairs |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | Clone, install, verify, update, uninstall, and rollback steps |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Troubleshooting commands for missing tools, timeouts, and stale smoke |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the installer, guard, launcher, and plugin route fit together |
+| [`docs/CURRENT-STATE.md`](docs/CURRENT-STATE.md) | The health contract for a working installation |
+| [`SECURITY.md`](SECURITY.md) | Security boundaries, reporting, and privacy expectations |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution checks and review expectations |
 
-## License And Funding
+## License
 
 This project is licensed under the Apache License 2.0. See [`LICENSE`](LICENSE).
 
-Use of the project is free and does not require payment. Funding is disabled
-for the public release surface unless a maintainer deliberately adds a
-non-personal donation channel later. Donations, if ever enabled, do not create
-a support, maintenance, warranty, or priority-response obligation.
+Use of the project is free and does not require payment.

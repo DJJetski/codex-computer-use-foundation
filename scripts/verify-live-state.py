@@ -24,6 +24,7 @@ from foundation_manifest import (
     LEGACY_GUARD_LAUNCH_AGENT_LABELS,
     REPO_ROOT,
     mode_octal,
+    redact_text,
     repo_path,
     safe_env_home,
     sha256_file,
@@ -178,6 +179,8 @@ def launchagent_checks(home: Path, *, skip_launchctl: bool) -> list[dict[str, ob
     try:
         payload = plistlib.loads(plist_path.read_bytes())
         checks.append(check(payload.get("Label") == GUARD_LAUNCH_AGENT_LABEL, "guard LaunchAgent label"))
+        env = payload.get("EnvironmentVariables", {})
+        checks.append(check(bool(env.get("CODEX_CU_CODEX_APP")), "LaunchAgent persists Codex app path"))
         args = payload.get("ProgramArguments", [])
         checks.append(check(args[:1] == [str(home / "Library/Application Support/CodexComputerUseGuard/codex-computer-use-guard-bootstrap")], "LaunchAgent bootstrap path"))
         checks.append(check("ensure-config" in args, "LaunchAgent runs ensure-config"))
@@ -272,6 +275,13 @@ def guard_status_checks(home: Path, *, require_operational: bool) -> tuple[list[
     return checks, payload
 
 
+def redacted_payload(payload: dict[str, object], home: Path) -> dict[str, object]:
+    text = json.dumps(payload, sort_keys=True)
+    text = text.replace(str(home), "$HOME")
+    text = redact_text(text)
+    return json.loads(text)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify native Codex Computer Use repair live state")
     parser.add_argument("--home", default=None, help="target home directory; defaults to $HOME")
@@ -280,6 +290,11 @@ def main() -> int:
     parser.add_argument("--skip-live-invariants", action="store_true", help="only verify repo source and manifest-installed files")
     parser.add_argument("--require-operational", action="store_true")
     parser.add_argument("--skip-launchctl", action="store_true")
+    parser.add_argument(
+        "--include-private-paths",
+        action="store_true",
+        help="include absolute local paths in JSON output; default replaces the target home with $HOME",
+    )
     args = parser.parse_args()
 
     home = safe_env_home(args.home)
@@ -302,6 +317,7 @@ def main() -> int:
             "ok": status.get("ok"),
             "structural_ok": status.get("structural_ok"),
             "health_layers": status.get("health_layers"),
+            "operational_state": status.get("operational_state"),
             "dialog_autopilot": {
                 key: (status.get("dialog_autopilot") or {}).get(key)
                 for key in ["ok", "launch_agent_loaded", "accessibility_ok"]
@@ -312,6 +328,8 @@ def main() -> int:
             },
         }
     if args.json:
+        if not args.include_private_paths:
+            payload = redacted_payload(payload, home)
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         for item in checks:

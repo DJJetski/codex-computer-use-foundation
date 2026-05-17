@@ -21,9 +21,10 @@ window moves, focus changes, a dialog appears, or a coordinate is slightly off.
 Native Computer Use gives Codex a better control plane for local Mac work and a
 better way to verify that the action really happened.
 
-## What "Second Mouse" Means Here
+## How Verification Works
 
-This project uses "second mouse" as a concrete health claim, not as marketing.
+This project treats native interaction evidence as a concrete health claim, not
+as marketing.
 
 The guard reports `second_mouse_verified=true` only after fresh native smoke
 proves that the Codex MCP path completed real native GUI actions without using a

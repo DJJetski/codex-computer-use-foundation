@@ -30,6 +30,20 @@ SECRET_VALUE_PATTERNS = [
 
 
 def git_files(include_untracked: bool) -> list[Path]:
+    git_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if git_root.returncode != 0 or Path(git_root.stdout.strip()).resolve() != REPO_ROOT:
+        return [
+            path
+            for path in sorted(REPO_ROOT.rglob("*"))
+            if path.is_file() and ".git" not in path.relative_to(REPO_ROOT).parts
+        ]
     tracked_result = subprocess.run(
         ["git", "ls-files"],
         cwd=REPO_ROOT,

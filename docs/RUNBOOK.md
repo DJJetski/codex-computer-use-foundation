@@ -42,6 +42,11 @@ Expected:
 - all health layers true
 - native smoke fresh and fallback-free
 
+If `structural_ok=true` but `ok=false`, inspect `operational_state`. A state of
+`structural_ok_needs_fresh_native_smoke` means the repair layer is present, but
+the current machine still needs full `ensure`, `tool_search`, or a fresh Codex
+thread before native operation is proven.
+
 If the only failure is `failure_class=stale_native_smoke`, run full `ensure`.
 That is the intended fail-closed refresh path.
 

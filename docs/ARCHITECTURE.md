@@ -9,7 +9,7 @@ out, loses the Codex AppServer rendezvous, or is blocked by broken local plugin
 routing. The architecture below keeps the official native Computer Use MCP path
 intact and proves it with native tool calls.
 
-For a user-facing explanation of Computer Use, second mouse verification, and
+For a user-facing explanation of Computer Use, native verification, and
 native-versus-fallback boundaries, see `docs/WHAT-IS-COMPUTER-USE.md`.
 
 ## Why Native Computer Use Is The Target
@@ -44,6 +44,11 @@ client binary, macOS helper prompts, and stale native client processes.
 The repair system keeps these pieces in sync from source-owned files under this
 repo, installs the runtime into `$HOME/.codex`, and then fails closed unless a
 fresh Codex-context smoke proves real native operations.
+
+When the installer is pointed at a non-default Codex app path, it persists that
+validated path under `$HOME/.codex/state/computer-use-guard/codex-app-path`.
+The guard LaunchAgent and native launcher read that state so Codex restarts and
+Mac reboots do not silently fall back to `/Applications/Codex.app`.
 
 ## High-Level Flow
 

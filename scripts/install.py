@@ -43,6 +43,7 @@ def launch_agent_target(label: str) -> str:
 
 SNAPSHOT_EXTRA_TARGETS = [
     ".codex/config.toml",
+    ".codex/state/computer-use-guard/codex-app-path",
     *FOUNDATION_OBSOLETE_TARGETS,
     launch_agent_target(GUARD_LAUNCH_AGENT_LABEL),
     launch_agent_target(DIALOG_AUTOPILOT_LAUNCH_AGENT_LABEL),
@@ -290,6 +291,24 @@ def install_files(home: Path, *, dry_run: bool) -> list[str]:
     return actions
 
 
+def persist_codex_app_path(home: Path, codex_app: Path, *, dry_run: bool) -> list[str]:
+    path = home / ".codex/state/computer-use-guard/codex-app-path"
+    assert_within_home(home, path)
+    assert_no_symlink_components(home, path, allow_leaf=True)
+    desired = str(codex_app) + "\n"
+    current = path.read_text(encoding="utf-8") if path.exists() else ""
+    if current == desired:
+        return []
+    action = f"persist Codex app path for restart repair: {path}"
+    if dry_run:
+        return [f"would {action}"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    tmp.write_text(desired, encoding="utf-8")
+    os.replace(tmp, path)
+    return [action]
+
+
 def remove_obsolete_targets(home: Path, *, dry_run: bool) -> list[str]:
     actions: list[str] = []
     targets = [home / relative for relative in FOUNDATION_OBSOLETE_TARGETS]
@@ -394,14 +413,17 @@ def main() -> int:
     scrub_actions = scrub_config(home, dry_run=args.dry_run)
     obsolete_actions = remove_obsolete_targets(home, dry_run=args.dry_run)
     actions = install_files(home, dry_run=args.dry_run)
+    codex_app_actions = persist_codex_app_path(home, codex_app, dry_run=args.dry_run)
     payload = {
         "ok": True,
         "dry_run": args.dry_run,
         "home": str(home),
         "codex_app": str(codex_app),
         "snapshot": str(snapshot_dir) if snapshot_dir else None,
-        "actions": scrub_actions + obsolete_actions + actions,
+        "actions": scrub_actions + obsolete_actions + actions + codex_app_actions,
         "postinstall": not args.skip_postinstall and not args.dry_run,
+        "private_output_warning": "Installer snapshots and absolute paths are local recovery data; do not paste raw snapshot contents or full verifier JSON in public issues.",
+        "native_operation_check_requested": bool(args.full_ensure and not args.dry_run and not args.skip_postinstall),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     if args.dry_run or args.skip_postinstall:

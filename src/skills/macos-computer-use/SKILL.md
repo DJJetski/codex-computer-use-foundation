@@ -38,7 +38,7 @@ the codex-computer-use-foundation source repository
 ```
 
 Runtime files are installed under `~/.codex`; install from the source checkout
-or public release package instead of hand-editing installed files. Do not move
+or downloaded package instead of hand-editing installed files. Do not move
 runtime paths out of `~/.codex` because Codex and the bundled Computer Use
 plugin expect that layout.
 

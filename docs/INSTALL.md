@@ -64,7 +64,7 @@ Prerequisites:
 Then clone the repo and run:
 
 ```bash
-git clone <public-repo-url> codex-computer-use-foundation
+git clone https://github.com/DJJetski/codex-computer-use-foundation.git
 cd codex-computer-use-foundation
 python3 --version
 scripts/install.py --dry-run
@@ -118,14 +118,6 @@ For a downloaded tarball, use the published SHA256:
 
 ```bash
 scripts/release-drill.py --tarball /tmp/codex-computer-use-foundation-public.tar.gz --expected-sha256 <published-sha256>
-```
-
-Maintainer-only live proof, which destructively uninstalls and reinstalls
-foundation-owned runtime state in the target home:
-
-```bash
-scripts/release-drill.py --live --yes
-scripts/release-drill.py --tarball /tmp/codex-computer-use-foundation-public.tar.gz --expected-sha256 <published-sha256> --live --yes
 ```
 
 ## What The Installer Does
@@ -233,8 +225,10 @@ or unrelated `$HOME/.codex` settings.
   `io.github.codex-computer-use-foundation.dialog-autopilot` for the same
   reason.
 - Codex is expected at `/Applications/Codex.app` by default. If it is installed
-  elsewhere, pass `--codex-app /path/to/Codex.app`; the installer still
-  validates that the bundle identifier is `com.openai.codex`.
+  elsewhere, pass `--codex-app /path/to/Codex.app`; the installer validates
+  that the bundle identifier is `com.openai.codex` and persists that app path
+  under `$HOME/.codex/state/computer-use-guard/codex-app-path` so later
+  LaunchAgent repair and plugin launches use the same validated Codex app.
 - `codex-dialog-autopilot` is source-owned and manifest-installed, but it is
   not part of the native Computer Use MCP path and is not a native operational
   health gate. It exists only for narrow local allow/OK/helper/firewall/AppData

@@ -36,14 +36,12 @@ Important invariants:
 - If a fresh thread does not show `mcp__computer_use__`, try `tool_search` for
   `computer-use list_apps get_app_state click type_text press_key` before
   declaring native tool exposure unavailable.
-- README and release presentation should stay simple, stylish, and symmetric.
-  Start the GitHub page with the centered text heading and short explanation,
-  not a duplicated hero image. SVG text must sit on quiet backgrounds, stay
-  inside its visual boxes with balanced left/right padding, and avoid tiny
-  technical status badges in the first-screen explanation. Public first-screen
-  graphics are for users, not maintainers: describe detecting, repairing,
-  verifying, and using Computer Use again; keep release/package wording for
-  maintainer-only sections.
+- README should stay simple, text-first, and easy to scan. Start the GitHub
+  page with the centered text heading, short explanation, and copy-pasteable
+  install path. Do not add hero images, SVG diagrams, or design-heavy graphics
+  to the repo page. Public first-screen wording is for users: describe missing
+  or broken native Computer Use, repair, verification, and fresh-thread use;
+  keep packaging and publication wording for maintainer-only sections.
 - This is a solo-maintainer public repo. Other users may download, inspect,
   fork, or open PRs, but they should not have direct write access unless the
   owner grants it. Do not treat lack of a second reviewer as a blocker for

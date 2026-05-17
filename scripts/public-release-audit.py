@@ -18,6 +18,20 @@ PUBLIC_AUTHOR_NAME = "Codex Computer Use Foundation"
 PUBLIC_AUTHOR_EMAIL = "codex-computer-use-foundation@example.invalid"
 ALLOWED_EMAILS = {PUBLIC_AUTHOR_EMAIL}
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+HISTORY_EMAIL_GREP_RE = r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"
+PRIVATE_KEY_HEADER = "-----BEGIN "
+HISTORY_SECRET_GREP_RES = [
+    PRIVATE_KEY_HEADER + "PRIVATE KEY-----",
+    PRIVATE_KEY_HEADER + "RSA PRIVATE KEY-----",
+    PRIVATE_KEY_HEADER + "EC PRIVATE KEY-----",
+    PRIVATE_KEY_HEADER + "OPENSSH PRIVATE KEY-----",
+    r"sk-[A-Za-z0-9_-]{24,}",
+    r"gh[pousr]_[A-Za-z0-9_]{24,}",
+    r"xox[baprs]-[A-Za-z0-9-]{24,}",
+    r"ya29\.[A-Za-z0-9_-]{24,}",
+    r"authorization[[:space:]]*[:=][[:space:]]*bearer[[:space:]]+[A-Za-z0-9._-]{20,}",
+    r"(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)[[:space:]]*[:=][[:space:]]*['\"]?[A-Za-z0-9._/-]{20,}",
+]
 SURFACE_DENY_PREFIXES = (
     ".git/",
     "docs/internal/",
@@ -45,6 +59,10 @@ GENERIC_ACCOUNT_MARKERS = {
     "user",
     "users",
 }
+PUBLIC_ACCOUNT_MARKERS = {
+    "DJJetski",
+    "DJ Jetski",
+}
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -65,7 +83,18 @@ def git_lines(cmd: list[str]) -> list[str]:
     return result.stdout.splitlines()
 
 
+def repo_has_own_git_metadata() -> bool:
+    result = run(["git", "rev-parse", "--show-toplevel"], check=False)
+    return result.returncode == 0 and Path(result.stdout.strip()).resolve() == REPO_ROOT
+
+
 def git_files(include_untracked: bool) -> list[Path]:
+    if not repo_has_own_git_metadata():
+        return [
+            path
+            for path in sorted(REPO_ROOT.rglob("*"))
+            if path.is_file() and ".git" not in path.relative_to(REPO_ROOT).parts
+        ]
     listed = run(["git", "ls-files"], check=False)
     if listed.returncode != 0:
         return [
@@ -82,12 +111,20 @@ def git_files(include_untracked: bool) -> list[Path]:
 def personal_markers() -> list[str]:
     home = Path.home().resolve()
     markers = {str(home)}
+    allowed_public_markers = set(PUBLIC_ACCOUNT_MARKERS)
+    for value in (os.environ.get("PUBLIC_RELEASE_AUDIT_ALLOWED_MARKERS") or "").split(","):
+        if value.strip():
+            allowed_public_markers.add(value.strip())
 
     def add_auto_marker(value: str | None) -> None:
         if not value:
             return
         marker = value.strip()
-        if marker and marker.lower() not in GENERIC_ACCOUNT_MARKERS:
+        if (
+            marker
+            and marker.lower() not in GENERIC_ACCOUNT_MARKERS
+            and marker.lower() not in {item.lower() for item in allowed_public_markers}
+        ):
             markers.add(marker)
 
     add_auto_marker(home.name)
@@ -151,6 +188,8 @@ def scan_public_surface(files: list[Path]) -> list[str]:
 
 
 def scan_commit_identities(refspec: str) -> list[str]:
+    if not repo_has_own_git_metadata():
+        return []
     result = run(
         [
             "git",
@@ -178,6 +217,8 @@ def scan_commit_identities(refspec: str) -> list[str]:
 
 
 def history_content_refs(all_refs: bool) -> list[str]:
+    if not repo_has_own_git_metadata():
+        return []
     if not all_refs:
         return ["HEAD"]
     result = run(["git", "rev-list", "--all"], check=False)
@@ -198,6 +239,47 @@ def scan_history_content(refs: list[str], markers: list[str]) -> list[str]:
             findings.append(f"personal marker in git history: {first}")
         elif result.returncode not in {1, 128}:
             findings.append(f"git grep failed for marker {marker!r}: {result.stderr.strip()}")
+    return findings
+
+
+def git_grep_regex(pattern: str, refs: list[str], *, ignore_case: bool = False) -> subprocess.CompletedProcess[str]:
+    cmd = ["git", "grep", "-I", "-n", "-E"]
+    if ignore_case:
+        cmd.append("-i")
+    cmd.extend(["-e", pattern, *refs, "--", "."])
+    return run(cmd, check=False)
+
+
+def scan_history_emails(refs: list[str]) -> list[str]:
+    if not refs:
+        return []
+    result = git_grep_regex(HISTORY_EMAIL_GREP_RE, refs, ignore_case=True)
+    if result.returncode == 1:
+        return []
+    if result.returncode not in {0, 1}:
+        return [f"git grep failed for historic email scan: {result.stderr.strip()}"]
+    findings: list[str] = []
+    for line in result.stdout.splitlines():
+        for email in EMAIL_RE.findall(line):
+            if email.lower() not in {item.lower() for item in ALLOWED_EMAILS}:
+                findings.append(f"non-public email in git history: {line[:500]}")
+                break
+    return findings
+
+
+def scan_history_secrets(refs: list[str]) -> list[str]:
+    if not refs:
+        return []
+    findings: list[str] = []
+    for pattern in HISTORY_SECRET_GREP_RES:
+        result = git_grep_regex(pattern, refs, ignore_case=True)
+        if result.returncode == 1:
+            continue
+        if result.returncode != 0:
+            findings.append(f"git grep failed for historic secret pattern: {result.stderr.strip()}")
+            continue
+        first = result.stdout.splitlines()[0] if result.stdout else pattern
+        findings.append(f"possible secret in git history: {first[:500]}")
     return findings
 
 
@@ -228,7 +310,11 @@ def main() -> int:
         findings.extend(scan_public_surface(files))
     if not args.skip_commit_identities:
         findings.extend(scan_commit_identities(refspec))
-    findings.extend(scan_history_content(history_content_refs(args.all_refs), markers))
+    refs = history_content_refs(args.all_refs)
+    findings.extend(scan_history_content(refs, markers))
+    if args.all_refs:
+        findings.extend(scan_history_emails(refs))
+        findings.extend(scan_history_secrets(refs))
 
     if findings:
         for finding in findings:

@@ -116,9 +116,13 @@ class FoundationTests(unittest.TestCase):
             guard.index('$HOME/.codex/plugins/marketplaces/openai-bundled/plugins/computer-use'),
         )
         self.assertIn('$HOME/.codex/plugins/cache/openai-bundled/computer-use"/*/', guard)
+        self.assertIn('$HOME/.codex/state/computer-use-guard/codex-app-path', guard)
+        self.assertIn('$HOME/.codex/state/computer-use-guard/codex-app-path', launcher)
         self.assertIn('for native_binary in "${native_candidates[@]}"; do', guard)
         self.assertIn('"cleanup-mcp-clients"', guard)
-        self.assertIn("post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(kill_duplicates=False)", guard)
+        self.assertIn("post_smoke_mcp_cleanup = cleanup_stale_mcp_clients(", guard)
+        self.assertIn("kill_duplicates=True", guard)
+        self.assertIn("respect_duplicate_grace=False", guard)
         self.assertIn('"post_smoke_mcp_cleanup": post_smoke_mcp_cleanup', guard)
         self.assertNotIn("${{", guard)
 
@@ -129,6 +133,26 @@ class FoundationTests(unittest.TestCase):
         self.assertIn('"launch_agent_loaded": launch_agent_loaded', ensure_config_branch)
         self.assertIn('"bootstrap_exists": BOOTSTRAP.is_file()', ensure_config_branch)
         self.assertIn('"guard_backup_exists": GUARD_BACKUP.is_file()', ensure_config_branch)
+        self.assertIn('"operational_state": operational_state', ensure_config_branch)
+        self.assertIn('"codex_app_path_state": str(CODEX_APP_PATH_STATE)', ensure_config_branch)
+
+    def test_operational_state_marks_structural_ok_stale_smoke(self) -> None:
+        guard = load_guard_module()
+        state = guard._operational_state(
+            structural_ok=True,
+            health_layers={
+                "configured": True,
+                "discoverable": True,
+                "runtime_ready": True,
+                "mcp_client_ownership": True,
+                "appserver_rendezvous": False,
+                "operational": False,
+                "second_mouse_verified": False,
+            },
+            native_smoke={"failure_class": "stale_native_smoke"},
+        )
+        self.assertEqual(state["state"], "structural_ok_needs_fresh_native_smoke")
+        self.assertIn("fresh Codex thread", state["next_step"])
 
     def test_guard_health_fails_closed_on_duplicate_mcp_clients(self) -> None:
         guard = load_guard_module()
@@ -148,6 +172,25 @@ class FoundationTests(unittest.TestCase):
         self.assertFalse(health["operational"])
         self.assertFalse(health["second_mouse_verified"])
 
+    def test_operational_state_names_duplicate_mcp_clients(self) -> None:
+        guard = load_guard_module()
+        state = guard._operational_state(
+            structural_ok=True,
+            health_layers={
+                "configured": True,
+                "discoverable": True,
+                "runtime_ready": True,
+                "mcp_client_ownership": False,
+                "appserver_rendezvous": False,
+                "operational": False,
+                "second_mouse_verified": False,
+            },
+            native_smoke={"operational": True},
+            ownership={"duplicate_parents": {"123": [1, 2]}},
+        )
+        self.assertEqual(state["state"], "structural_ok_duplicate_mcp_clients")
+        self.assertIn("collapse duplicate", state["next_step"])
+
     def test_guard_duplicate_mcp_cleanup_keeps_newest_client_per_parent(self) -> None:
         guard = load_guard_module()
         parent = os.getpid()
@@ -164,6 +207,29 @@ class FoundationTests(unittest.TestCase):
 
         self.assertEqual(sorted(killed), [101, 102])
         self.assertEqual(cleanup["running"], 3)
+        self.assertEqual(cleanup["skipped_young"], [])
+
+    def test_guard_duplicate_mcp_cleanup_can_respect_or_ignore_grace(self) -> None:
+        guard = load_guard_module()
+        parent = os.getpid()
+        killed: list[int] = []
+        guard._processes_matching = lambda needle: [
+            (301, parent, "/tmp/SkyComputerUseClient mcp"),
+            (302, parent, "/tmp/SkyComputerUseClient mcp"),
+            (303, parent, "/tmp/SkyComputerUseClient mcp"),
+        ]
+        guard._process_age_seconds = lambda pid: {301: 5, 302: 90, 303: 1}[pid]
+        guard._kill_pid = lambda pid: killed.append(pid) or True
+
+        cleanup = guard.cleanup_stale_mcp_clients(kill_duplicates=True)
+
+        self.assertEqual(killed, [302])
+        self.assertEqual(cleanup["skipped_young"], [301])
+
+        killed.clear()
+        cleanup = guard.cleanup_stale_mcp_clients(kill_duplicates=True, respect_duplicate_grace=False)
+
+        self.assertEqual(sorted(killed), [301, 302])
         self.assertEqual(cleanup["skipped_young"], [])
 
     def test_guard_default_mcp_cleanup_does_not_kill_active_duplicates(self) -> None:
@@ -290,6 +356,14 @@ class FoundationTests(unittest.TestCase):
                 )
                 self.assertNotIn(ABSOLUTE_HOME_MARKER, text)
 
+    def test_guard_launch_agent_persists_codex_app_path_environment(self) -> None:
+        guard = load_guard_module()
+        payload = guard._launch_agent_payload()
+        self.assertEqual(
+            payload.get("EnvironmentVariables", {}).get("CODEX_CU_CODEX_APP"),
+            str(guard.OPENAI_CODEX_APP),
+        )
+
     def test_plugin_shim_mcp_json_stays_relative(self) -> None:
         payload = json.loads(repo_path("src/plugin-shim/computer-use/.mcp.json").read_text(encoding="utf-8"))
         server = payload["mcpServers"]["computer-use"]
@@ -367,6 +441,12 @@ class FoundationTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(install.returncode, 0, install.stdout)
+            install_payload = json.loads(install.stdout)
+            self.assertIn("private_output_warning", install_payload)
+            self.assertEqual(
+                (home / ".codex/state/computer-use-guard/codex-app-path").read_text(encoding="utf-8").strip(),
+                "/Applications/Codex.app",
+            )
             for item in INSTALL_MANIFEST:
                 target = target_path(home, item)
                 self.assertTrue(target.is_file(), target)
@@ -623,6 +703,29 @@ class FoundationTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(verify.returncode, 0, verify.stdout)
+
+    def test_readme_public_surface_is_user_first_and_text_only(self) -> None:
+        readme = repo_path("README.md").read_text(encoding="utf-8")
+        first_screen = readme[:2500]
+        self.assertIn("Repair native OpenAI Codex Computer Use", first_screen)
+        self.assertIn("git clone https://github.com/DJJetski/codex-computer-use-foundation.git", first_screen)
+        self.assertNotIn("<img", first_screen)
+        self.assertNotIn("foundation-" + "overview.svg", readme)
+        self.assertNotIn("foundation-" + "release-card.svg", readme)
+        self.assertNotIn("Use " + "Again", readme)
+        self.assertNotIn("Public Release " + "Package", readme)
+        self.assertNotIn("harden" + "ing", readme.lower())
+
+    def test_public_release_allowlist_excludes_design_assets(self) -> None:
+        module_path = SCRIPTS / "build-public-release.py"
+        loader = importlib.machinery.SourceFileLoader("build_public_release_asset_surface_under_test", str(module_path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader if spec else None)
+        module = importlib.util.module_from_spec(spec)
+        assert spec is not None and spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertFalse(any(path.startswith("assets/") for path in module.PUBLIC_EXACT))
 
     def test_public_release_manifest_and_tarball_have_sha256_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1517,6 +1620,53 @@ class FoundationTests(unittest.TestCase):
             self.assertNotEqual(rollback.returncode, 0, rollback.stdout)
             self.assertIn("escapes snapshot", rollback.stdout)
 
+    def test_rollback_restores_symlink_and_directory_snapshot_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / "home"
+            snapshot = root / "snapshot"
+            files = snapshot / "files"
+            home.mkdir()
+            files.mkdir(parents=True)
+            (snapshot / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {
+                                "target": ".codex/link",
+                                "existed": True,
+                                "backup": "files/.codex/link",
+                                "symlink": True,
+                                "link_target": "target-file",
+                                "mode": "0o777",
+                            },
+                            {
+                                "target": ".codex/state-dir",
+                                "existed": True,
+                                "directory": True,
+                                "mode": "0o700",
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (files / ".codex").mkdir(parents=True)
+            (files / ".codex/link").write_text("symlink -> target-file\n", encoding="utf-8")
+            rollback = subprocess.run(
+                [sys.executable, str(SCRIPTS / "rollback.py"), str(snapshot), "--home", str(home), "--yes"],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(rollback.returncode, 0, rollback.stdout)
+            self.assertTrue((home / ".codex/link").is_symlink())
+            self.assertEqual(os.readlink(home / ".codex/link"), "target-file")
+            self.assertTrue((home / ".codex/state-dir").is_dir())
+            self.assertEqual(stat.S_IMODE((home / ".codex/state-dir").stat().st_mode), 0o700)
+
     def test_redaction_covers_toml_and_authorization_headers(self) -> None:
         dummy_key = "abcdef" + "1234567890"
         dummy_token = "ghp_" + "abcdefghijklmnopqrstuvwx"
@@ -1567,6 +1717,70 @@ class FoundationTests(unittest.TestCase):
             self.assertEqual(private.returncode, 0, private.stdout)
             self.assertEqual(json.loads(private.stdout)["home"], str(home))
 
+    def test_verify_live_state_redacts_home_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve() / "home"
+            (home / ".codex").mkdir(parents=True)
+            install = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "install.py"),
+                    "--home",
+                    str(home),
+                    "--yes",
+                    "--skip-runtime-checks",
+                    "--skip-postinstall",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(install.returncode, 0, install.stdout)
+            verify = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "verify-live-state.py"),
+                    "--home",
+                    str(home),
+                    "--expect-installed-from-repo",
+                    "--skip-live-invariants",
+                    "--skip-launchctl",
+                    "--json",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(verify.returncode, 0, verify.stdout)
+            payload = json.loads(verify.stdout)
+            self.assertEqual(payload["home"], "$HOME")
+            self.assertNotIn(str(home), verify.stdout)
+
+            private = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "verify-live-state.py"),
+                    "--home",
+                    str(home),
+                    "--expect-installed-from-repo",
+                    "--skip-live-invariants",
+                    "--skip-launchctl",
+                    "--json",
+                    "--include-private-paths",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            self.assertEqual(private.returncode, 0, private.stdout)
+            self.assertEqual(json.loads(private.stdout)["home"], str(home))
+
     def test_secret_scan_detects_local_state_and_tokens(self) -> None:
         module_path = SCRIPTS / "secret-scan.py"
         loader = importlib.machinery.SourceFileLoader("secret_scan_under_test", str(module_path))
@@ -1606,6 +1820,46 @@ class FoundationTests(unittest.TestCase):
                 os.environ.pop("PUBLIC_RELEASE_AUDIT_EXTRA_MARKERS", None)
             else:
                 os.environ["PUBLIC_RELEASE_AUDIT_EXTRA_MARKERS"] = old_value
+
+    def test_public_release_audit_scans_history_for_email_and_secret_patterns(self) -> None:
+        module_path = SCRIPTS / "public-release-audit.py"
+        loader = importlib.machinery.SourceFileLoader("public_release_audit_history_under_test", str(module_path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader if spec else None)
+        module = importlib.util.module_from_spec(spec)
+        assert spec is not None and spec.loader is not None
+        spec.loader.exec_module(module)
+        private_email = "private" + "@example.com"
+
+        def fake_email_grep(pattern: str, refs: list[str], *, ignore_case: bool = False) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                ["git", "grep"],
+                0,
+                f"abc123:README.md:1:contact {private_email}\n"
+                "abc123:README.md:2:contact codex-computer-use-foundation@example.invalid\n",
+                "",
+            )
+
+        old_grep = module.git_grep_regex
+        try:
+            module.git_grep_regex = fake_email_grep
+            email_findings = module.scan_history_emails(["HEAD"])
+            self.assertEqual(len(email_findings), 1, email_findings)
+            self.assertIn(private_email, email_findings[0])
+
+            def fake_secret_grep(pattern: str, refs: list[str], *, ignore_case: bool = False) -> subprocess.CompletedProcess[str]:
+                if "gh[pousr]" in pattern:
+                    token = "ghp_" + "abcdefghijklmnopqrstuvwxyz"
+                    return subprocess.CompletedProcess(["git", "grep"], 0, f"abc123:foo:1:token {token}\n", "")
+                return subprocess.CompletedProcess(["git", "grep"], 1, "", "")
+
+            module.git_grep_regex = fake_secret_grep
+            secret_findings = module.scan_history_secrets(["HEAD"])
+            self.assertEqual(len(secret_findings), 1, secret_findings)
+            self.assertIn("possible secret in git history", secret_findings[0])
+        finally:
+            module.git_grep_regex = old_grep
 
     def test_public_release_audit_ignores_generic_ci_account_markers(self) -> None:
         module_path = SCRIPTS / "public-release-audit.py"

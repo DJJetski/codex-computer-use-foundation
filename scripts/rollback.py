@@ -38,11 +38,20 @@ def main() -> int:
     for item in manifest.get("files", []):
         target = home / item["target"]
         assert_within_home(home, target)
-        assert_no_symlink_components(home, target)
+        assert_no_symlink_components(home, target, allow_leaf=True)
         if not item.get("existed", True):
             actions.append(f"remove newly installed {target}")
-            if not args.dry_run and target.exists():
-                target.unlink()
+            if not args.dry_run and (target.exists() or target.is_symlink()):
+                if target.is_dir() and not target.is_symlink():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            continue
+        if item.get("directory"):
+            actions.append(f"restore directory metadata {target}")
+            if not args.dry_run:
+                target.mkdir(parents=True, exist_ok=True)
+                os.chmod(target, int(str(item.get("mode", "0o755")), 8))
             continue
         backup = snapshot / item["backup"]
         try:
@@ -62,6 +71,14 @@ def main() -> int:
         if args.dry_run:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        if item.get("symlink"):
+            os.symlink(str(item.get("link_target") or ""), target)
+            continue
         tmp = target.with_name(f".{target.name}.rollback-{os.getpid()}")
         shutil.copy2(backup, tmp)
         os.chmod(tmp, int(str(item.get("mode", "0o644")), 8))

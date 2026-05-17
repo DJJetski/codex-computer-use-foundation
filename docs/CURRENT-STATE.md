@@ -20,6 +20,10 @@ The important distinction is:
   config are repaired.
 - `ok=true` means structural health, clean native MCP client ownership, and
   fresh authoritative native smoke from the Codex-context MCP path.
+- `operational_state.state=structural_ok_needs_fresh_native_smoke` means the
+  local repair layer is in place, but native operation still needs a full
+  `ensure`, `tool_search`, or fresh Codex thread before it can be treated as
+  current evidence.
 
 The system must not report full success just because the config looks right.
 Full success requires real native calls and no duplicate native MCP clients
@@ -109,6 +113,8 @@ computer-use
 - Dialog operator helper: `$HOME/.codex/bin/codex-dialog-autopilot`
 - Canonical skill: `$HOME/.codex/skills/macos-computer-use/SKILL.md`
 - Guard state: `$HOME/.codex/state/computer-use-guard/`
+- Persisted Codex app path:
+  `$HOME/.codex/state/computer-use-guard/codex-app-path`
 - LaunchAgent:
   `~/Library/LaunchAgents/io.github.codex-computer-use-foundation.guard.plist`
 - Bootstrap/backup root:
