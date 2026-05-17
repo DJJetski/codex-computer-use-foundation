@@ -1,0 +1,81 @@
+<svg width="2400" height="1440" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" text-rendering="geometricPrecision">
+  <title id="title">Foundation Repair Flow</title>
+  <desc id="desc">A four step overview: detect broken native Computer Use, repair routing, prove native operation, and ship a sanitized release package.</desc>
+
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#090D10"/>
+      <stop offset="1" stop-color="#0C1216"/>
+    </linearGradient>
+    <linearGradient id="line" x1="144" y1="360" x2="1056" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#75F4D4"/>
+      <stop offset="0.5" stop-color="#F6C766"/>
+      <stop offset="1" stop-color="#FF5C8A"/>
+    </linearGradient>
+    <filter id="soft" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="720" rx="34" fill="url(#panel)" />
+  <rect x="1" y="1" width="1198" height="718" rx="33" stroke="#2A3440" stroke-width="2" />
+
+  <g opacity="0.25">
+    <path d="M88 86H222M978 86H1112M88 634H222M978 634H1112M600 58V128M600 592V662" stroke="#31404A" stroke-width="2" stroke-linecap="round"/>
+    <path d="M154 360H1046" stroke="#31404A" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 14"/>
+  </g>
+
+  <text x="600" y="84" text-anchor="middle" fill="#75F4D4" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" font-weight="850" letter-spacing="4">REPAIR CONTRACT</text>
+  <text x="600" y="132" text-anchor="middle" fill="#F6F8FB" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="44" font-weight="900">Native path stays native</text>
+  <text x="600" y="166" text-anchor="middle" fill="#9BAAB5" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="650">No hidden AppleScript, Accessibility, screenshots, browser automation, Keyboard Maestro, or VPN inside MCP.</text>
+
+  <path d="M216 360H984" stroke="url(#line)" stroke-width="6" stroke-linecap="round"/>
+
+  <g filter="url(#soft)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <rect x="72" y="238" width="230" height="244" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <rect x="104" y="270" width="56" height="56" rx="18" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <text x="132" y="306" text-anchor="middle" fill="#75F4D4" font-size="26" font-weight="900">01</text>
+    <text x="104" y="362" fill="#F6F8FB" font-size="25" font-weight="900">Detect</text>
+    <text x="104" y="400" fill="#9BAAB5" font-size="18" font-weight="650">Missing tools,</text>
+    <text x="104" y="426" fill="#9BAAB5" font-size="18" font-weight="650">disabled plugin,</text>
+    <text x="104" y="452" fill="#9BAAB5" font-size="18" font-weight="650">stale clients.</text>
+
+    <rect x="348" y="238" width="230" height="244" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <rect x="380" y="270" width="56" height="56" rx="18" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <text x="408" y="306" text-anchor="middle" fill="#F6C766" font-size="26" font-weight="900">02</text>
+    <text x="380" y="362" fill="#F6F8FB" font-size="25" font-weight="900">Repair</text>
+    <text x="380" y="400" fill="#9BAAB5" font-size="18" font-weight="650">Marketplace,</text>
+    <text x="380" y="426" fill="#9BAAB5" font-size="18" font-weight="650">plugin shim,</text>
+    <text x="380" y="452" fill="#9BAAB5" font-size="18" font-weight="650">native launcher.</text>
+
+    <rect x="624" y="238" width="230" height="244" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <rect x="656" y="270" width="56" height="56" rx="18" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <text x="684" y="306" text-anchor="middle" fill="#75F4D4" font-size="26" font-weight="900">03</text>
+    <text x="656" y="362" fill="#F6F8FB" font-size="25" font-weight="900">Prove</text>
+    <text x="656" y="400" fill="#9BAAB5" font-size="18" font-weight="650">Fresh smoke,</text>
+    <text x="656" y="426" fill="#9BAAB5" font-size="18" font-weight="650">AppServer,</text>
+    <text x="656" y="452" fill="#9BAAB5" font-size="18" font-weight="650">second mouse.</text>
+
+    <rect x="900" y="238" width="230" height="244" rx="24" fill="#0D1418" stroke="#31404A" stroke-width="2"/>
+    <rect x="932" y="270" width="56" height="56" rx="18" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <text x="960" y="306" text-anchor="middle" fill="#FF5C8A" font-size="26" font-weight="900">04</text>
+    <text x="932" y="362" fill="#F6F8FB" font-size="25" font-weight="900">Release</text>
+    <text x="932" y="400" fill="#9BAAB5" font-size="18" font-weight="650">Sanitized tree,</text>
+    <text x="932" y="426" fill="#9BAAB5" font-size="18" font-weight="650">SHA256 asset,</text>
+    <text x="932" y="452" fill="#9BAAB5" font-size="18" font-weight="650">download drill.</text>
+  </g>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="17" font-weight="800">
+    <rect x="248" y="556" width="196" height="48" rx="24" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <circle cx="276" cy="580" r="6" fill="#75F4D4"/>
+    <text x="296" y="586" fill="#F6F8FB">ok=true requires smoke</text>
+
+    <rect x="500" y="556" width="200" height="48" rx="24" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <circle cx="528" cy="580" r="6" fill="#F6C766"/>
+    <text x="548" y="586" fill="#F6F8FB">fallback_used=false</text>
+
+    <rect x="756" y="556" width="196" height="48" rx="24" fill="#10181D" stroke="#31404A" stroke-width="2"/>
+    <circle cx="784" cy="580" r="6" fill="#FF5C8A"/>
+    <text x="804" y="586" fill="#F6F8FB">public audit clean</text>
+  </g>
+</svg>
