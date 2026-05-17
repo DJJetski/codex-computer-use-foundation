@@ -1073,7 +1073,7 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue((package / "docs/releases/v0.1.8.md").is_file())
             self.assertTrue((package / ".github/FUNDING.yml").is_file())
             self.assertTrue((package / ".github/workflows/ci.yml").is_file())
-            self.assertTrue((package / ".github/workflows/codeql.yml").is_file())
+            self.assertFalse((package / ".github/workflows/codeql.yml").exists())
             self.assertFalse((package / "docs/internal").exists())
             self.assertFalse((package / "src/skills/macos-computer-use/references").exists())
             home = tmp_path / "home"

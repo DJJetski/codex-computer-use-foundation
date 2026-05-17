@@ -33,7 +33,6 @@ PUBLIC_EXACT = {
     ".github/dependabot.yml",
     ".github/FUNDING.yml",
     ".github/pull_request_template.md",
-    ".github/workflows/codeql.yml",
     ".github/workflows/ci.yml",
     ".gitattributes",
     ".gitignore",
