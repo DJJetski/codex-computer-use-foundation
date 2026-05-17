@@ -201,8 +201,14 @@ Responsibilities:
   allowlisted dialog text; process name alone is not enough.
 - Reject denylisted dialog text before any click, even when the process name
   and app text look otherwise routine.
-- Exclude network/firewall rules, privacy, security, account, cloud-permission,
-  payment, TCC, password, and SecurityAgent prompts from unattended approval.
+- Exclude generic network/firewall rules, privacy, security, account,
+  cloud-permission, payment, TCC, password, and SecurityAgent prompts from
+  unattended approval.
+- Handle Little Snitch only through a separate restricted Foundation/Codex
+  network-prompt path. That path is for this repair system's recurring helper
+  prompts after the user has granted local Automation/Accessibility access; it
+  is not native Computer Use health and must not approve unrelated firewall
+  rules.
 - Keep these prompts from blocking future reinstall or first-run flows after
   the one-time macOS Accessibility/Automation permission exists.
 - Stay outside the native Computer Use MCP path. This layer is not used to

@@ -162,9 +162,12 @@ computer-use
   keep narrowly matched helper/AppData/browser prompts from blocking first-use
   flows, but it is not native Computer Use and is not evidence for `ok=true`.
   Strong button clicks require both an allowlisted helper process and
-  allowlisted dialog text. Firewall and network rule prompts remain explicit
-  operator decisions. Denylisted privacy/security/TCC/network/firewall text
-  wins over otherwise safe app names, and unattended `Always Allow` is disabled.
+  allowlisted dialog text. Generic firewall and network rule prompts remain
+  explicit operator decisions. A separate restricted Foundation/Codex network
+  path may handle matching Little Snitch prompts for this repair system after
+  local Automation/Accessibility access exists; denylisted
+  privacy/security/TCC/admin/password/account/payment/cloud text still wins,
+  and routine prompts never get unattended `Always Allow`.
 - VPN is separate. Do not connect VPN just to use Computer Use.
 - Target OpenAI Codex as `/Applications/Codex.app` or `com.openai.codex`; never
   as plain `Codex` or `CODEX`.

@@ -333,9 +333,10 @@ layer, not the native Computer Use health source. A transient foreground
 The autopilot checks the frontmost app first, then scans only currently running
 allowlisted dialog owners such as `Codex Computer Use`,
 `SkyComputerUseService`, `UserNotificationCenter`, and `CoreServicesUIAgent`.
-It intentionally does not scan `SecurityAgent` or approve network/firewall
-rules, privacy, security, TCC, password, account, payment, or cloud-permission
-dialogs.
+It handles Little Snitch only through the separate restricted Foundation/Codex
+network-prompt path. It intentionally does not scan `SecurityAgent` or approve
+generic network/firewall rules, privacy, security, TCC, password, account,
+payment, or cloud-permission dialogs.
 
 Accept routine local dialogs when the visible text matches the active task and
 the action is reversible or narrowly scoped:
@@ -344,19 +345,22 @@ the action is reversible or narrowly scoped:
   prompts
 - local `Allow`, `OK`, `Open`, `Continue`, and equivalent routine confirmations
 
-Before any click, the autopilot must reject dialogs whose visible text mentions
-privacy, security, TCC, Screen Recording, Accessibility, App Data, administrator
-credentials, Keychain, network rules, firewall rules, Little Snitch, or their
-German equivalents. It must not click `Always Allow` unattended.
+Before any routine click, the autopilot must reject dialogs whose visible text
+mentions privacy, security, TCC, Screen Recording, Accessibility, App Data,
+administrator credentials, Keychain, network rules, firewall rules,
+Little Snitch, or their German equivalents. It must not click `Always Allow`
+on the routine dialog path.
 
 Choose the narrowest visible option that works:
 
 - current app/process rather than any app
 - current-task duration unless the user asked for persistent reliability
 
-Handle Little Snitch and other firewall rule prompts as explicit operator work,
-not unattended autopilot work. A human or a task-specific operator command must
-choose the narrow rule; the autopilot must not press `Always Allow` for generic
+Handle generic Little Snitch and other firewall rule prompts as explicit
+operator work, not unattended autopilot work. The restricted Foundation/Codex
+network-prompt path may click `Always Allow` only for matching prompts from
+this repair system after local Automation/Accessibility access exists. A human
+or a task-specific operator command must choose the narrow rule for unrelated
 network dialogs.
 
 Do not use dialog automation for destructive actions, cloud/account permission

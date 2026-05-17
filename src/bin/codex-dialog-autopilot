@@ -3,10 +3,10 @@
 
 This helper is intentionally separate from the native Computer Use MCP server.
 It is an operator safety net for routine local product dialogs, helper prompts,
-and local browser-control prompts that are already covered by the user's
-standing approval policy. It must not approve network/firewall rule dialogs,
-privacy, security, account, payment, cloud-permission, TCC, or
-password/security-agent prompts.
+local browser-control prompts, and narrowly identified Foundation/Codex network
+prompts that are already covered by the user's standing approval policy. It
+must not approve generic network/firewall rule dialogs, privacy, security,
+account, payment, cloud-permission, TCC, or password/security-agent prompts.
 """
 
 from __future__ import annotations
@@ -116,14 +116,18 @@ def _accessibility_ok() -> tuple[bool, str]:
 
 def _approver_applescript() -> str:
     # Start with the frontmost process, then scan a short allowlist of helper
-    # processes. This deliberately excludes SecurityAgent and privacy/security
-    # prompts; those require the user's normal macOS approval flow.
+    # processes. Little Snitch is handled only by the separate Foundation/Codex
+    # network prompt path below, never by the routine dialog path.
     return r'''
 	set safeProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent"}
-	set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent"}
+	set foundationNetworkProcessNames to {"Little Snitch Agent", "Little Snitch"}
+	set scanProcessNames to {"Codex Computer Use", "SkyComputerUseClient", "SkyComputerUseService", "UserNotificationCenter", "CoreServicesUIAgent", "Little Snitch Agent", "Little Snitch"}
 	set safeNeedles to {"Codex Computer Use", "SkyComputerUse", "Google Chrome", "Chrome", "Safari", "browser", "Browser", "chatgpt.com"}
-	set denyNeedles to {"Privacy", "Security", "Privacy & Security", "System Settings", "Screen Recording", "Accessibility", "Automation", "App Data", "data from other apps", "other apps", "TCC", "administrator", "admin", "password", "credential", "keychain", "network", "firewall", "incoming connections", "outgoing connections", "Little Snitch", "Datenschutz", "Sicherheit", "Datenschutz und Sicherheit", "Systemeinstellungen", "Bildschirmaufnahme", "Bedienungshilfen", "Automation", "Automatisierung", "App-Daten", "Daten aus anderen Apps", "andere Apps", "Administrator", "Passwort", "Schluesselbund", "Schlüsselbund", "Netzwerk", "Firewall", "eingehende Verbindungen", "ausgehende Verbindungen"}
+	set routineDenyNeedles to {"Privacy", "Security", "Privacy & Security", "System Settings", "Screen Recording", "Accessibility", "Automation", "App Data", "data from other apps", "other apps", "TCC", "administrator", "admin", "password", "credential", "keychain", "network", "firewall", "incoming connections", "outgoing connections", "Little Snitch", "Datenschutz", "Sicherheit", "Datenschutz und Sicherheit", "Systemeinstellungen", "Bildschirmaufnahme", "Bedienungshilfen", "Automation", "Automatisierung", "App-Daten", "Daten aus anderen Apps", "andere Apps", "Administrator", "Passwort", "Schluesselbund", "Schlüsselbund", "Netzwerk", "Firewall", "eingehende Verbindungen", "ausgehende Verbindungen"}
+	set foundationNetworkDenyNeedles to {"Privacy & Security", "System Settings", "Screen Recording", "Accessibility", "Automation", "App Data", "data from other apps", "other apps", "TCC", "administrator", "admin", "password", "credential", "keychain", "account", "payment", "SecurityAgent", "Datenschutz und Sicherheit", "Systemeinstellungen", "Bildschirmaufnahme", "Bedienungshilfen", "Automation", "Automatisierung", "App-Daten", "Daten aus anderen Apps", "andere Apps", "Administrator", "Passwort", "Schluesselbund", "Schlüsselbund", "Konto", "Zahlung"}
+	set foundationNetworkNeedles to {"Codex Computer Use", "SkyComputerUse", "SkyComputerUseClient", "SkyComputerUseService", "CodexComputerUseGuard", "codex-computer-use", "codex-dialog-autopilot", "codex-computer-use-guard", "codex-computer-use-native-launcher", "OpenAI Codex", "com.openai.codex", "chatgpt.com", "openai.com", "127.0.0.1", "localhost"}
 	set strongButtons to {"Allow", "Erlauben", "Zulassen", "Open", "Oeffnen", "Öffnen", "Continue", "Fortfahren"}
+	set foundationNetworkButtons to {"Always Allow", "Immer erlauben", "Immer zulassen", "Allow", "Erlauben", "Zulassen"}
 	set weakButtons to {"OK", "Done", "Fertig"}
 
 using terms from application "System Events"
@@ -159,35 +163,38 @@ on collectContainerText(containerRef)
 	return collectedText
 end collectContainerText
 
-on approveContainer(processName, containerRef, containerLabel, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
+on firstExistingButton(containerRef, buttonNames)
 	set candidateButton to ""
-	set isStrongButton to false
-	repeat with buttonName in strongButtons
+	repeat with buttonName in buttonNames
 		try
 			if exists button (buttonName as text) of containerRef then
 				set candidateButton to (buttonName as text)
-				set isStrongButton to true
 				exit repeat
 			end if
 		end try
 	end repeat
-	if candidateButton is "" then
-		repeat with buttonName in weakButtons
-			try
-				if exists button (buttonName as text) of containerRef then
-					set candidateButton to (buttonName as text)
-					set isStrongButton to false
-					exit repeat
-				end if
-			end try
-		end repeat
-	end if
-	if candidateButton is "" then return ""
+	return candidateButton
+end firstExistingButton
+
+on approveContainer(processName, containerRef, containerLabel, safeProcessNames, foundationNetworkProcessNames, safeNeedles, routineDenyNeedles, foundationNetworkDenyNeedles, foundationNetworkNeedles, strongButtons, weakButtons, foundationNetworkButtons)
 	set containerText to my collectContainerText(containerRef)
-	if my containsAny(containerText, denyNeedles) then return ""
 	set processIsSafe to my listContains(safeProcessNames, processName)
 	set textIsSafe to my containsAny(containerText, safeNeedles)
-	if processIsSafe and textIsSafe then
+	set isFoundationNetworkProcess to my listContains(foundationNetworkProcessNames, processName)
+	set textIsFoundationNetwork to my containsAny(containerText, foundationNetworkNeedles)
+	if isFoundationNetworkProcess and textIsFoundationNetwork and not (my containsAny(containerText, foundationNetworkDenyNeedles)) then
+		set candidateButton to my firstExistingButton(containerRef, foundationNetworkButtons)
+		if candidateButton is not "" then
+			try
+				click button candidateButton of containerRef
+				return "clicked|" & (processName as text) & "|" & candidateButton & "|" & (containerLabel as text)
+			end try
+		end if
+	end if
+	if processIsSafe and textIsSafe and not (my containsAny(containerText, routineDenyNeedles)) then
+		set candidateButton to my firstExistingButton(containerRef, strongButtons)
+		if candidateButton is "" then set candidateButton to my firstExistingButton(containerRef, weakButtons)
+		if candidateButton is "" then return ""
 		try
 			click button candidateButton of containerRef
 			return "clicked|" & (processName as text) & "|" & candidateButton & "|" & (containerLabel as text)
@@ -196,7 +203,7 @@ on approveContainer(processName, containerRef, containerLabel, safeProcessNames,
 	return ""
 end approveContainer
 
-on approveProcess(processName, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
+on approveProcess(processName, safeProcessNames, foundationNetworkProcessNames, safeNeedles, routineDenyNeedles, foundationNetworkDenyNeedles, foundationNetworkNeedles, strongButtons, weakButtons, foundationNetworkButtons)
 	tell application "System Events"
 		try
 			with timeout of 1 second
@@ -207,7 +214,7 @@ on approveProcess(processName, safeProcessNames, safeNeedles, denyNeedles, stron
 							set windowLabel to (name of candidateWindow as text)
 						end try
 						if windowLabel is "" then set windowLabel to "window"
-						set approvalResult to my approveContainer(processName, candidateWindow, windowLabel, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
+						set approvalResult to my approveContainer(processName, candidateWindow, windowLabel, safeProcessNames, foundationNetworkProcessNames, safeNeedles, routineDenyNeedles, foundationNetworkDenyNeedles, foundationNetworkNeedles, strongButtons, weakButtons, foundationNetworkButtons)
 						if approvalResult is not "" then return approvalResult
 						try
 							repeat with candidateSheet in sheets of candidateWindow
@@ -215,7 +222,7 @@ on approveProcess(processName, safeProcessNames, safeNeedles, denyNeedles, stron
 								try
 									set sheetLabel to windowLabel & "/" & (name of candidateSheet as text)
 								end try
-								set approvalResult to my approveContainer(processName, candidateSheet, sheetLabel, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
+								set approvalResult to my approveContainer(processName, candidateSheet, sheetLabel, safeProcessNames, foundationNetworkProcessNames, safeNeedles, routineDenyNeedles, foundationNetworkDenyNeedles, foundationNetworkNeedles, strongButtons, weakButtons, foundationNetworkButtons)
 								if approvalResult is not "" then return approvalResult
 							end repeat
 						end try
@@ -242,14 +249,14 @@ tell application "System Events"
 	end try
 end tell
 
-if frontProcessName is not "" and my listContains(safeProcessNames, frontProcessName) then
-	set approvalResult to my approveProcess(frontProcessName, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
+if frontProcessName is not "" and (my listContains(safeProcessNames, frontProcessName) or my listContains(foundationNetworkProcessNames, frontProcessName)) then
+	set approvalResult to my approveProcess(frontProcessName, safeProcessNames, foundationNetworkProcessNames, safeNeedles, routineDenyNeedles, foundationNetworkDenyNeedles, foundationNetworkNeedles, strongButtons, weakButtons, foundationNetworkButtons)
 	if approvalResult is not "" then return approvalResult
 end if
 
 repeat with processName in scanProcessNames
 	if ((processName as text) is not frontProcessName) and my listContains(liveProcessNames, processName as text) then
-		set approvalResult to my approveProcess(processName as text, safeProcessNames, safeNeedles, denyNeedles, strongButtons, weakButtons)
+		set approvalResult to my approveProcess(processName as text, safeProcessNames, foundationNetworkProcessNames, safeNeedles, routineDenyNeedles, foundationNetworkDenyNeedles, foundationNetworkNeedles, strongButtons, weakButtons, foundationNetworkButtons)
 		if approvalResult is not "" then return approvalResult
 	end if
 end repeat

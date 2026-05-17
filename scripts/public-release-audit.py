@@ -275,6 +275,8 @@ def scan_native_contract_consistency() -> list[str]:
         "screenshot",
         "Little Snitch",
         "Always Allow",
+        "Foundation/Codex",
+        "Generic firewall",
         "Terminal",
         "Codex itself",
         "fallback_used=false",

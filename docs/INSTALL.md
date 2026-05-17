@@ -232,9 +232,12 @@ or unrelated `$HOME/.codex` settings.
 - `codex-dialog-autopilot` is source-owned and manifest-installed, but it is
   not part of the native Computer Use MCP path and is not a native operational
   health gate. It exists only for narrow local allow/OK/helper/AppData prompts;
-  privacy/security/TCC/network/firewall deny text is checked before any click,
-  unattended `Always Allow` is disabled, and firewall/network rule dialogs
-  remain explicit operator decisions.
+  privacy/security/TCC/admin/password/account/payment/cloud deny text is
+  checked before any click, routine unattended `Always Allow` is disabled, and
+  generic firewall/network rule dialogs remain explicit operator decisions. A
+  separate restricted Foundation/Codex network path may handle matching Little
+  Snitch prompts for this repair system after local Automation/Accessibility
+  access exists.
 
 ## Verify
 

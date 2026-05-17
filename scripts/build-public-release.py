@@ -46,7 +46,7 @@ PUBLIC_EXACT = {
     "docs/CAPABILITY-PARITY.md",
     "docs/CURRENT-STATE.md",
     "docs/INSTALL.md",
-    "docs/releases/v0.1.9.md",
+    "docs/releases/v0.1.10.md",
     "docs/RUNBOOK.md",
     "docs/WHAT-IS-COMPUTER-USE.md",
     "scripts/build-public-release.py",

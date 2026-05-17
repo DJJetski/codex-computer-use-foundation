@@ -114,11 +114,13 @@ This project does not replace Codex and does not modify
 `/Applications/Codex.app`.
 
 It does not grant macOS permissions, edit TCC databases, approve privacy
-dialogs, approve security prompts, approve network/firewall or Little Snitch
-decisions unattended, change account settings, install VPN routing, upload
-local state, or hide AppleScript, Accessibility scripting, screenshots,
-Playwright, Keyboard Maestro, Haindy, or `cliclick` inside the native Computer
-Use MCP path.
+dialogs, approve security prompts, approve generic network/firewall decisions,
+change account settings, install VPN routing, upload local state, or hide
+AppleScript, Accessibility scripting, screenshots, Playwright, Keyboard
+Maestro, Haindy, or `cliclick` inside the native Computer Use MCP path. The
+separate dialog helper can handle narrowly matched Foundation/Codex repair
+network prompts, including Little Snitch prompts, after the user has granted
+the local automation permission; that helper is not native Computer Use health.
 
 It is for troubleshooting and stabilizing native Computer Use routing. It is
 not a way to bypass OpenAI usage policies, OpenAI safety checks, macOS privacy

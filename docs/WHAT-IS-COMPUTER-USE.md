@@ -213,7 +213,10 @@ the proof targets Safari by bundle id through `computer-use` tools and requires
 The smoke proves non-frontmost native app action. It does not claim arbitrary
 control of minimized windows, invisible windows, off-Space windows, Terminal,
 Codex itself, administrator prompts, or security/privacy/network/firewall
-dialogs.
+dialogs. The separate dialog helper can still handle narrowly matched
+Foundation/Codex Little Snitch prompts for this repair system after the user has
+granted local Automation/Accessibility access; that helper is not native
+Computer Use.
 
 ### Does this help when Codex cannot click, type, scroll, drag, or press keys on my Mac?
 

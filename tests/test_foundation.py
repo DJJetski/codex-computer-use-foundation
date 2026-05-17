@@ -110,6 +110,9 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("SkyComputerUseClient mcp", text)
         self.assertNotIn("mcpServers", text)
         safe_process_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set safeProcessNames"))
+        foundation_network_process_line = next(
+            line.strip() for line in text.splitlines() if line.strip().startswith("set foundationNetworkProcessNames")
+        )
         for broad_app in [
             "Google Chrome",
             "Safari",
@@ -121,6 +124,8 @@ class FoundationTests(unittest.TestCase):
             "Little Snitch",
         ]:
             self.assertNotIn(broad_app, safe_process_line)
+        self.assertIn("Little Snitch Agent", foundation_network_process_line)
+        self.assertIn("Little Snitch", foundation_network_process_line)
         safe_needles_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set safeNeedles"))
         for privacy_needle in [
             "Datenschutz und Sicherheit",
@@ -135,7 +140,9 @@ class FoundationTests(unittest.TestCase):
             "eingehende Verbindungen",
         ]:
             self.assertNotIn(privacy_needle, safe_needles_line)
-        deny_needles_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set denyNeedles"))
+        routine_deny_needles_line = next(
+            line.strip() for line in text.splitlines() if line.strip().startswith("set routineDenyNeedles")
+        )
         for deny_needle in [
             "Privacy",
             "Security",
@@ -150,16 +157,37 @@ class FoundationTests(unittest.TestCase):
             "Netzwerk",
             "Firewall",
         ]:
-            self.assertIn(deny_needle, deny_needles_line)
+            self.assertIn(deny_needle, routine_deny_needles_line)
+        foundation_network_needles_line = next(
+            line.strip() for line in text.splitlines() if line.strip().startswith("set foundationNetworkNeedles")
+        )
+        for foundation_needle in [
+            "Codex Computer Use",
+            "SkyComputerUse",
+            "CodexComputerUseGuard",
+            "codex-computer-use",
+            "com.openai.codex",
+            "chatgpt.com",
+        ]:
+            self.assertIn(foundation_needle, foundation_network_needles_line)
         strong_buttons_line = next(line.strip() for line in text.splitlines() if line.strip().startswith("set strongButtons"))
+        foundation_network_buttons_line = next(
+            line.strip() for line in text.splitlines() if line.strip().startswith("set foundationNetworkButtons")
+        )
         self.assertNotIn("Always Allow", strong_buttons_line)
         self.assertNotIn("Immer erlauben", strong_buttons_line)
         self.assertNotIn("Immer zulassen", strong_buttons_line)
         self.assertNotIn("Trust", strong_buttons_line)
         self.assertNotIn("Vertrauen", strong_buttons_line)
-        self.assertIn("if my containsAny(containerText, denyNeedles) then return \"\"", text)
-        self.assertIn("if processIsSafe and textIsSafe then", text)
-        self.assertIn("frontProcessName is not \"\" and my listContains(safeProcessNames, frontProcessName)", text)
+        self.assertIn("Always Allow", foundation_network_buttons_line)
+        self.assertIn("Immer erlauben", foundation_network_buttons_line)
+        self.assertIn("Immer zulassen", foundation_network_buttons_line)
+        self.assertIn("foundationNetworkDenyNeedles", text)
+        self.assertIn("isFoundationNetworkProcess and textIsFoundationNetwork", text)
+        self.assertIn("not (my containsAny(containerText, foundationNetworkDenyNeedles))", text)
+        self.assertIn("not (my containsAny(containerText, routineDenyNeedles))", text)
+        self.assertIn("if processIsSafe and textIsSafe and not (my containsAny(containerText, routineDenyNeedles)) then", text)
+        self.assertIn("frontProcessName is not \"\" and (my listContains(safeProcessNames, frontProcessName) or my listContains(foundationNetworkProcessNames, frontProcessName))", text)
         self.assertNotIn("((not isStrongButton) and textIsSafe)", text)
         self.assertNotIn("isStrongButton and (processIsSafe or textIsSafe)", text)
 
@@ -1076,7 +1104,7 @@ class FoundationTests(unittest.TestCase):
             self.assertTrue((package / "SECURITY.md").is_file())
             self.assertTrue((package / "docs/WHAT-IS-COMPUTER-USE.md").is_file())
             self.assertTrue((package / "docs/CAPABILITY-PARITY.md").is_file())
-            self.assertTrue((package / "docs/releases/v0.1.9.md").is_file())
+            self.assertTrue((package / "docs/releases/v0.1.10.md").is_file())
             self.assertTrue((package / ".github/FUNDING.yml").is_file())
             self.assertTrue((package / ".github/workflows/ci.yml").is_file())
             self.assertFalse((package / ".github/workflows/codeql.yml").exists())

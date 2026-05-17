@@ -100,12 +100,18 @@ used as evidence for `ok=true`.
 It may click only allowlisted routine prompts after both the helper process and
 visible dialog text match the safe allowlist. Denylisted text wins before any
 click. Denylisted classes include privacy, security, TCC, Screen Recording,
-Accessibility, App Data, administrator credentials, Keychain, network/firewall
-rules, Little Snitch, account/cloud/payment dialogs, and their German
-equivalents. Unattended `Always Allow` remains disabled.
+Accessibility, App Data, administrator credentials, Keychain,
+account/cloud/payment dialogs, and their German equivalents. Unattended
+`Always Allow` remains disabled for this routine path.
 
-Little Snitch and similar firewall or identity-verification prompts are
-operator decisions. A user or explicit task-specific operator action can choose
-the narrow rule, but the public unattended autopilot must not disable or approve
-those controls automatically.
-
+Little Snitch and similar firewall or identity-verification prompts are not
+native Computer Use capabilities and must not be used as native health
+evidence. This repository does include a separate restricted operator path for
+Foundation/Codex repair network prompts after the user has granted local
+Automation/Accessibility access. That path may click `Always Allow` only when
+the dialog owner is Little Snitch and the visible text matches Foundation/Codex
+repair identifiers such as Codex Computer Use, SkyComputerUse,
+CodexComputerUseGuard, `codex-computer-use`, `com.openai.codex`,
+`chatgpt.com`, `openai.com`, localhost, or 127.0.0.1. Generic firewall,
+account, payment, privacy, TCC, administrator, password, Keychain, cloud, and
+security prompts remain operator decisions.

@@ -199,7 +199,10 @@ Do not treat that proof as permission to use fallback automation, and do not
 overread it as a guarantee for minimized windows, invisible windows, off-Space
 windows, Terminal, Codex itself, administrator prompts, or
 security/privacy/network/firewall dialogs. Those remain outside the unattended
-native health contract.
+native health contract. The separate dialog autopilot may still handle narrowly
+matched Foundation/Codex Little Snitch prompts for this repair system after the
+user has granted local Automation/Accessibility access; that is operator
+plumbing, not native Computer Use evidence.
 
 ## Backup Check
 
