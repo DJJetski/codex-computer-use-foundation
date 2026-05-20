@@ -427,6 +427,30 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(state["state"], "structural_ok_duplicate_mcp_clients")
         self.assertIn("collapse duplicate", state["next_step"])
 
+    def test_guard_reports_native_target_safety_boundaries(self) -> None:
+        guard = load_guard_module()
+        boundaries = guard._native_target_safety_boundaries()
+        self.assertTrue(boundaries["ok"])
+        self.assertFalse(boundaries["fallback_counts_as_native"])
+        self.assertFalse(boundaries["repairable_by_foundation"])
+        terminal = next(item for item in boundaries["blocked_apps"] if item["bundle_id"] == "com.apple.Terminal")
+        self.assertIn("safety reasons", terminal["reason"])
+        self.assertIn("command execution", terminal["operator_guidance"])
+        self.assertIn("Do not count AppleScript", terminal["operator_guidance"])
+
+    def test_terminal_safety_block_is_not_fallback_permission(self) -> None:
+        skill = repo_path("src/skills/macos-computer-use/SKILL.md").read_text(encoding="utf-8")
+        runbook = repo_path("docs/RUNBOOK.md").read_text(encoding="utf-8")
+        what_is = repo_path("docs/WHAT-IS-COMPUTER-USE.md").read_text(encoding="utf-8")
+        current_state = repo_path("docs/CURRENT-STATE.md").read_text(encoding="utf-8")
+        for text in [skill, runbook, what_is, current_state]:
+            with self.subTest():
+                self.assertIn("com.apple.Terminal", text)
+                self.assertIn("Codex command execution", text)
+                self.assertIn("AppleScript", text)
+        self.assertIn("Do not use a fallback just because the target app is safety-blocked", skill)
+        self.assertIn("If A Target App Is Safety-Blocked", runbook)
+
     def test_guard_duplicate_mcp_cleanup_keeps_newest_client_per_parent(self) -> None:
         guard = load_guard_module()
         parent = os.getpid()

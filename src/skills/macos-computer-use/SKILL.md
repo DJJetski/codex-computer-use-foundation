@@ -103,6 +103,17 @@ skill and stay in the user's normal browser session.
 9. Use isolated Playwright/test-browser surfaces only when isolation is the
    actual goal or the real-session path is unavailable.
 
+Native app-level safety refusals are different from broken Computer Use. If a
+native MCP call returns text like `Computer Use is not allowed to use the app
+'com.apple.Terminal' for safety reasons`, treat that target app as blocked by
+the upstream native Computer Use policy. Verify the general native route with
+safe apps, run the guard if general native tools are unhealthy, and do not open
+Terminal through AppleScript, Accessibility, `cliclick`, Keyboard Maestro, or a
+real Terminal GUI as a substitute for native Computer Use. For repo-local
+shell/git work, use Codex command execution directly; if the user specifically
+asks for non-native Terminal GUI operation, state that it is an explicit
+operator fallback and not native Computer Use.
+
 Native Computer Use tools normally include:
 
 - `list_apps`
@@ -293,6 +304,12 @@ session before claiming current-thread operational health.
 Fallbacks are an operator path, not a Computer Use repair and not part of the
 MCP server. Use them only after native repair has been attempted or when the
 user explicitly asks to keep going without restarting Codex.
+
+Do not use a fallback just because the target app is safety-blocked by native
+Computer Use. Terminal is the known example: `com.apple.Terminal` may appear in
+`list_apps`, while `get_app_state`, clicking, or typing is refused for safety
+reasons. That is not repaired by driving Terminal with AppleScript; use direct
+Codex command execution for shell tasks instead.
 
 Preference order:
 

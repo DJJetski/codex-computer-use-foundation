@@ -224,6 +224,15 @@ Foundation/Codex Little Snitch prompts for this repair system after the user has
 granted local Automation/Accessibility access; that helper is not native
 Computer Use.
 
+### What if Terminal is listed but refused?
+
+Terminal may appear in `list_apps` while `get_app_state`, clicking, or typing is
+refused with a native safety message for `com.apple.Terminal`. That is a target
+app policy boundary, not proof that plugin discovery is broken. Use normal
+Codex command execution for repo-local shell and Git operations. Do not use
+AppleScript or another GUI fallback to Terminal as if it repaired native
+Computer Use.
+
 ### Does this help when Codex cannot click, type, scroll, drag, or press keys on my Mac?
 
 Yes, if the failure is in native Codex Computer Use exposure or runtime health.

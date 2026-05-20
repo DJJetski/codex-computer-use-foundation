@@ -264,6 +264,25 @@ Common classes:
 5. Check `mcp_client_ownership` in guard status for stale duplicate clients.
 6. Prefer a fresh Codex thread after the guard is green.
 
+## If A Target App Is Safety-Blocked
+
+`list_apps` can succeed while a specific app is still refused by the native
+Computer Use server. The known case is Terminal:
+
+```text
+Computer Use is not allowed to use the app 'com.apple.Terminal' for safety reasons.
+```
+
+That message means the native route is present, but the target app is blocked by
+upstream native policy. It is not fixed by opening Terminal with AppleScript,
+Accessibility scripting, `cliclick`, Keyboard Maestro, or another GUI fallback.
+Those paths are not native Computer Use and must not satisfy a native-only task.
+
+For repo-local shell or Git work, use Codex command execution directly. If
+general native tools fail on safe apps too, run full `ensure`; if only Terminal
+is refused, keep the native repair state separate from the Terminal target
+policy boundary.
+
 ## Safe Destructive Drill Ideas
 
 Only run these when intentionally testing self-healing:

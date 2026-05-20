@@ -124,6 +124,18 @@ EXPECTED_NATIVE_MCP_TOOLS: tuple[str, ...] = (
     "press_key",
     "type_text",
 )
+NATIVE_TARGET_SAFETY_BLOCKED_APPS: tuple[dict[str, str], ...] = (
+    {
+        "bundle_id": "com.apple.Terminal",
+        "app": "/System/Applications/Utilities/Terminal.app",
+        "reason": "OpenAI native Computer Use currently rejects Terminal targets for safety reasons.",
+        "operator_guidance": (
+            "Use normal Codex command execution for repo-local shell/git work, or stop and ask before "
+            "an explicit non-native Terminal GUI fallback. Do not count AppleScript, Accessibility, "
+            "or coordinate automation as native Computer Use success."
+        ),
+    },
+)
 PLUGIN_SKILL_SUPPRESSED_NOTICE = """# Computer Use Plugin Skill Suppressed
 
 This plugin still owns native Computer Use MCP discovery through `.mcp.json`.
@@ -2487,6 +2499,22 @@ def _direct_mcp_absence_status(config_text: str) -> dict[str, Any]:
     }
 
 
+def _native_target_safety_boundaries() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "scope": "target_app_policy",
+        "blocked_apps": list(NATIVE_TARGET_SAFETY_BLOCKED_APPS),
+        "fallback_counts_as_native": False,
+        "repairable_by_foundation": False,
+        "expected_agent_behavior": (
+            "If native Computer Use reports that one of these target apps is not allowed for safety "
+            "reasons, treat the target as blocked by upstream native policy. Verify general native "
+            "health with safe apps, but do not open the blocked app through AppleScript or another "
+            "fallback as a substitute for native Computer Use."
+        ),
+    }
+
+
 def _health_layers(
     *,
     configured: bool,
@@ -3098,6 +3126,7 @@ def ensure() -> dict[str, Any]:
         "native_smoke_refreshed": native_smoke_refreshed,
         "native_smoke_refresh_error": native_smoke_refresh_error,
         "mcp_client_ownership": ownership,
+        "native_target_safety_boundaries": _native_target_safety_boundaries(),
         "openai_codex_app": str(OPENAI_CODEX_APP),
         "codex_app_path_state": str(CODEX_APP_PATH_STATE),
         "codex_app_path_state_changed": codex_app_path_state_changed,
@@ -3330,6 +3359,7 @@ def status() -> dict[str, Any]:
         "operational_state": operational_state,
         "native_smoke": native_smoke,
         "mcp_client_ownership": ownership,
+        "native_target_safety_boundaries": _native_target_safety_boundaries(),
         "openai_codex_app": str(OPENAI_CODEX_APP),
         "codex_app_path_state": str(CODEX_APP_PATH_STATE),
         "codex_app_path_state_exists": CODEX_APP_PATH_STATE.is_file(),
@@ -3515,6 +3545,7 @@ def main(argv: list[str]) -> int:
                 "operational_state": operational_state,
                 "native_smoke": native_smoke,
                 "mcp_client_ownership": ownership,
+                "native_target_safety_boundaries": _native_target_safety_boundaries(),
                 "command": command,
                 "version": version,
                 "codex_app_path_state": str(CODEX_APP_PATH_STATE),

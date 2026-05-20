@@ -173,6 +173,12 @@ computer-use
   thread.
 - No AppleScript, Accessibility scripting, screenshots, `cliclick`, Keyboard
   Maestro, Playwright, or VPN may be hidden inside the Computer Use MCP path.
+- Native app-level safety refusals are target policy boundaries, not structural
+  repair failures. The known example is `com.apple.Terminal`: it may appear in
+  `list_apps` while native `get_app_state`, click, or typing is refused for
+  safety reasons. For repo-local shell/Git work, use Codex command execution
+  directly; do not drive Terminal through AppleScript or another GUI fallback as
+  a substitute for native Computer Use.
 - `codex-dialog-autopilot` is a separate routine-dialog operator layer. It may
   keep narrowly matched helper/AppData/browser prompts from blocking first-use
   flows, but it is not native Computer Use and is not evidence for `ok=true`.
