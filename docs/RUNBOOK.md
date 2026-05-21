@@ -106,6 +106,32 @@ Expected:
 - `smoke_cleanup.errors=[]`
 - `unstructured_stdout_lines=0`
 
+## Native Chrome Smoke
+
+Use this when the task specifically depends on the user's normal Google Chrome
+app/profile:
+
+```bash
+~/.codex/bin/codex-computer-use-guard chrome-smoke | jq '{ok,fresh,failure_class,fallback_used,smoke_target,list_apps_completed,get_app_state_completed,set_value_completed,press_key_completed,chrome_seen,chrome_set_value_verified,success_marker,unstructured_stdout_lines}'
+```
+
+Expected:
+
+- `ok=true`
+- `fallback_used=false`
+- `smoke_target=com.google.Chrome`
+- `chrome_seen=true`
+- `chrome_set_value_verified=true`
+- `set_value_completed>=1`
+- `press_key_completed>=2`
+- `success_marker=true`
+- `unstructured_stdout_lines=0`
+
+The Chrome smoke uses native `set_value` for Chrome's settable address/search
+field. Current Computer Use plugin 1.0.799 can reject `type_text` on that field
+with `Missing required argument: text` even when the argument is present; that
+does not justify a fallback browser automation path.
+
 ## Preflight For A Planned GUI Task
 
 ```bash

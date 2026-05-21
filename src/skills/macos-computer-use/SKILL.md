@@ -92,15 +92,23 @@ skill and stay in the user's normal browser session.
    automation as proof of native success.
 4. Begin each native Computer Use turn with `get_app_state` for the target app.
 5. Prefer element-index actions from the accessibility tree over coordinates.
-6. Verify each UI action by reading the action result or fetching fresh state.
-7. Do not connect VPN just to use Computer Use.
-8. Do not hide app-native APIs, AppleScript, Accessibility scripting,
+6. For Google Chrome address/search-field navigation, prefer the native
+   settable field route: `get_app_state`, focus or identify the address/search
+   text field, then use `set_value` on that element and verify with fresh
+   `get_app_state`. On Codex 26.519.22136 with Computer Use plugin 1.0.799,
+   native `type_text` against Chrome's address/search field can return
+   `Missing required argument: text` even when Codex supplied the text
+   argument; that is a Chrome-target tool behavior, not permission to switch to
+   browser automation or AppleScript.
+7. Verify each UI action by reading the action result or fetching fresh state.
+8. Do not connect VPN just to use Computer Use.
+9. Do not hide app-native APIs, AppleScript, Accessibility scripting,
    `cliclick`, screenshots, pointer simulation, or Keyboard Maestro inside the
    Computer Use MCP path. If native Computer Use is unavailable, repair native
    Computer Use first. When the user explicitly wants work to continue in the
    current session anyway, use the low-interference fallback rules below and
    state that it is not native Computer Use.
-9. Use isolated Playwright/test-browser surfaces only when isolation is the
+10. Use isolated Playwright/test-browser surfaces only when isolation is the
    actual goal or the real-session path is unavailable.
 
 Native app-level safety refusals are different from broken Computer Use. If a

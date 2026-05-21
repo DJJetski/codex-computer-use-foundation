@@ -107,6 +107,24 @@ stale MCP transport state from before repair. If `mcp__computer_use__` is
 visible but a call returns `Transport closed`, parity is proven only after a
 fresh thread or another live thread successfully calls `mcp__computer_use__.list_apps`.
 
+## Google Chrome Native Use
+
+Chrome is a supported native Computer Use target when the app is allowed by
+Codex and macOS permissions are in place. The guard includes a separate
+Chrome-specific smoke for tasks that depend on the user's normal Google Chrome
+app/profile. That smoke opens a temporary Chrome tab, uses native
+`get_app_state`, `press_key`, and `set_value` against `com.google.Chrome`, then
+verifies the token through fresh native app state. It does not use Browser Use,
+Playwright, AppleScript, Accessibility scripting, screenshots, or coordinate
+fallbacks.
+
+Current live validation on Codex 26.519.22136 with Computer Use plugin 1.0.799
+showed that `type_text` can fail against Chrome's address/search field with
+`Missing required argument: text` even when the native tool-call arguments
+include `text`. For that specific settable Chrome field, native parity is better
+served by `set_value`, because it remains inside the official Computer Use MCP
+surface and is verifiable in `get_app_state`.
+
 The smoke does not claim arbitrary control of minimized windows, off-Space
 windows, invisible windows, Terminal, Codex itself, administrator prompts, or
 security/privacy dialogs. If OpenAI expands the Codex app MCP surface or

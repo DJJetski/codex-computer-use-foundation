@@ -105,6 +105,13 @@ Expected high-level result:
   smoke, with `target_not_frontmost_verified=true`. The value is recorded as
   evidence, not assumed, because older plugin builds have reported different
   frontmost state during the same smoke flow.
+- Google Chrome can be validated separately with
+  `$HOME/.codex/bin/codex-computer-use-guard chrome-smoke`. Current live
+  validation on Codex 26.519.22136 with Computer Use plugin 1.0.799 uses native
+  `get_app_state`, `press_key`, and `set_value` against `com.google.Chrome`
+  and records the result in `chrome_smoke`. This Chrome smoke is additional
+  target-app evidence; it is not a fallback and does not replace the generic
+  Calculator health smoke.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 
@@ -132,6 +139,8 @@ computer-use
 - Fresh smoke helper: `$HOME/.codex/bin/codex-computer-use-native-smoke`
 - Notify wrapper: `$HOME/.codex/bin/codex-computer-use-notify`
 - Dialog operator helper: `$HOME/.codex/bin/codex-dialog-autopilot`
+- Chrome smoke state:
+  `$HOME/.codex/state/computer-use-guard/last-chrome-smoke.json`
 - Canonical skill: `$HOME/.codex/skills/macos-computer-use/SKILL.md`
 - Guard state: `$HOME/.codex/state/computer-use-guard/`
 - Persisted Codex app path:

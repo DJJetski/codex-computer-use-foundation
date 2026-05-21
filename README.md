@@ -190,6 +190,16 @@ Tool-surface parity is checked separately with `tools/list`, so a missing
 `scroll`, `drag`, `set_value`, `select_text`, or secondary action tool fails
 discovery before full health can pass.
 
+For tasks that specifically depend on the user's normal Google Chrome
+app/profile, run the separate native Chrome smoke:
+
+```bash
+$HOME/.codex/bin/codex-computer-use-guard chrome-smoke
+```
+
+That smoke stays inside the native Computer Use MCP surface and verifies Chrome
+through `get_app_state`, `press_key`, and `set_value`.
+
 ## Fresh Thread Check
 
 After install or repair, open a fresh Codex thread. If native tools are not

@@ -707,6 +707,20 @@ class FoundationTests(unittest.TestCase):
         self.assertNotIn("com.apple.TextEdit", smoke_body)
         self.assertNotIn("super+s", smoke_body)
 
+    def test_chrome_smoke_uses_native_set_value_without_browser_fallback(self) -> None:
+        guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
+        function_start = guard_source.index("def _run_chrome_smoke()")
+        function_end = guard_source.index("def _bootstrap_script()", function_start)
+        smoke_body = guard_source[function_start:function_end]
+
+        self.assertIn("Target Google Chrome by bundle id com.google.Chrome", smoke_body)
+        self.assertIn("Call computer-use/press_key for com.google.Chrome with key super+t", smoke_body)
+        self.assertIn("Call computer-use/set_value for com.google.Chrome", smoke_body)
+        self.assertIn("Do not use type_text for the Chrome address/search field", smoke_body)
+        self.assertIn('["/usr/bin/open", "-g", "-a", "Google Chrome"]', smoke_body)
+        self.assertIn("browser automation", smoke_body)
+        self.assertIn("chrome_native_smoke", smoke_body)
+
     def test_native_smoke_detects_coordinate_click_attempts(self) -> None:
         guard = load_guard_module()
         events = [

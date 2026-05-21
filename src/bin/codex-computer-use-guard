@@ -33,6 +33,7 @@ LOG = CODEX_HOME / "logs" / "computer-use-guard.log.jsonl"
 STATE_DIR = CODEX_HOME / "state" / "computer-use-guard"
 STATUS_SNAPSHOT = STATE_DIR / "last-status.json"
 NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke.json"
+CHROME_SMOKE_STATUS = STATE_DIR / "last-chrome-smoke.json"
 UNVERIFIED_NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke-unverified.json"
 CODEX_APP_PATH_STATE = STATE_DIR / "codex-app-path"
 NATIVE_SMOKE_MAX_AGE_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_MAX_AGE_SECONDS", "900"))
@@ -292,9 +293,25 @@ def _write_native_smoke(payload: dict[str, Any]) -> None:
     os.replace(tmp, NATIVE_SMOKE_STATUS)
 
 
+def _write_chrome_smoke(payload: dict[str, Any]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = CHROME_SMOKE_STATUS.with_name(CHROME_SMOKE_STATUS.name + f".tmp-{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, CHROME_SMOKE_STATUS)
+
+
 def _load_native_smoke_raw() -> dict[str, Any] | None:
     try:
         with NATIVE_SMOKE_STATUS.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_chrome_smoke_raw() -> dict[str, Any] | None:
+    try:
+        with CHROME_SMOKE_STATUS.open("r", encoding="utf-8") as fh:
             payload = json.load(fh)
     except Exception:
         return None
@@ -426,6 +443,50 @@ def _native_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any
             "second_mouse_verified": second_mouse_verified,
             "failure_class": "" if operational else failure_class,
             "path": str(NATIVE_SMOKE_STATUS),
+            "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
+            "age_fresh": age_fresh,
+            "smoke_context_matches": context_matches,
+            "current_smoke_context": current_context,
+        }
+    )
+    return status
+
+
+def _chrome_smoke_status(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = payload if payload is not None else _load_chrome_smoke_raw()
+    now = int(time.time())
+    current_context = _current_native_smoke_context()
+    if raw is None:
+        return {
+            "ok": False,
+            "fresh": False,
+            "age_fresh": False,
+            "failure_class": "no_chrome_smoke_record",
+            "error": f"no Chrome smoke record at {CHROME_SMOKE_STATUS}",
+            "path": str(CHROME_SMOKE_STATUS),
+            "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
+            "current_smoke_context": current_context,
+        }
+    recorded_at = int(raw.get("recorded_at") or 0)
+    age_seconds = max(0, now - recorded_at) if recorded_at else None
+    age_fresh = recorded_at > 0 and age_seconds is not None and age_seconds <= NATIVE_SMOKE_MAX_AGE_SECONDS
+    smoke_context = raw.get("smoke_context") if isinstance(raw.get("smoke_context"), dict) else {}
+    context_matches = bool(smoke_context) and smoke_context == current_context
+    fresh = age_fresh and context_matches
+    failure_class = str(raw.get("failure_class") or "")
+    if not age_fresh:
+        failure_class = failure_class or "stale_chrome_smoke"
+    elif not context_matches:
+        failure_class = failure_class or "chrome_smoke_context_changed"
+    ok = bool(raw.get("ok")) and fresh and not failure_class
+    status = dict(raw)
+    status.update(
+        {
+            "ok": ok,
+            "fresh": fresh,
+            "age_seconds": age_seconds,
+            "failure_class": "" if ok else failure_class,
+            "path": str(CHROME_SMOKE_STATUS),
             "max_age_seconds": NATIVE_SMOKE_MAX_AGE_SECONDS,
             "age_fresh": age_fresh,
             "smoke_context_matches": context_matches,
@@ -918,6 +979,236 @@ def _run_native_smoke() -> dict[str, Any]:
     }
     status = _native_smoke_status(payload)
     _write_native_smoke(status)
+    cleanup_stale_mcp_clients(kill_duplicates=False)
+    return status
+
+
+def _run_chrome_smoke() -> dict[str, Any]:
+    """Run a Chrome-specific native MCP smoke without using browser fallbacks."""
+    _verify_openai_codex_app()
+    if not OPENAI_CODEX_EXEC.is_file():
+        raise RuntimeError(f"missing Codex executable: {OPENAI_CODEX_EXEC}")
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    started_at = int(time.time())
+    chrome_token = "CUNATIVE24681357"
+
+    setup_error = ""
+    try:
+        subprocess.run(
+            ["/usr/bin/open", "-g", "-a", "Google Chrome"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        subprocess.run(
+            ["/usr/bin/open", str(OPENAI_CODEX_APP)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        time.sleep(1.0)
+    except Exception as exc:
+        setup_error = str(exc)
+
+    success_line = "SUCCESS chrome_native_smoke"
+    prompt = (
+        "Use only native computer-use MCP tools and follow these numbered steps exactly. "
+        "If the native computer-use tools are not exposed yet, use only Codex tool discovery/search for: "
+        "computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text. "
+        "Do not call command_execution, shell, browser automation, AppleScript, Keyboard Maestro, screenshots, or any non-computer-use tool. "
+        "Target Google Chrome by bundle id com.google.Chrome. "
+        "1. Call computer-use/list_apps once. "
+        "2. Call computer-use/get_app_state for com.google.Chrome. "
+        "3. Call computer-use/press_key for com.google.Chrome with key super+t to open a new tab for this smoke. "
+        "4. Call computer-use/get_app_state for com.google.Chrome and find the address/search text field element index. "
+        f"5. Call computer-use/set_value for com.google.Chrome on that address/search field with exactly this value: {chrome_token}. "
+        f"6. Call computer-use/get_app_state for com.google.Chrome and confirm the state contains {chrome_token}. "
+        "7. Call computer-use/press_key for com.google.Chrome with key super+w to close the smoke tab. "
+        "If step 7 returns App quit or noWindowsAvailable after the press_key call, treat that as cleanup complete and continue. "
+        "Do not use type_text for the Chrome address/search field in this smoke; use native set_value for that settable field. "
+        f"Finish with exactly one final line: {success_line} only if all 7 numbered steps completed; "
+        "otherwise FAILURE and the precise failing step."
+    )
+    cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]
+    timed_out = False
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(HOME / "Codex") if (HOME / "Codex").is_dir() else str(HOME),
+            input="",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=NATIVE_SMOKE_TIMEOUT_SECONDS,
+        )
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        returncode = result.returncode
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
+        stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+        returncode = 124
+
+    events = _codex_exec_json_events(stdout)
+    stdout_lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    unstructured_stdout_lines = max(0, len(stdout_lines) - len(events))
+    structured_events_found = bool(events) and unstructured_stdout_lines == 0
+    command_execution_count = sum(
+        1
+        for event in events
+        if isinstance(event.get("item"), dict) and event["item"].get("type") == "command_execution"
+    )
+    first_computer_use_mcp_index = next(
+        (
+            idx
+            for idx, event in enumerate(events)
+            if isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "mcp_tool_call"
+            and event["item"].get("server") == "computer-use"
+        ),
+        None,
+    )
+    allowed_discovery_item_types = {"web_search", "tool_search"}
+
+    def _event_item_summary(event: dict[str, Any]) -> dict[str, Any]:
+        item = event["item"]
+        return {
+            "type": item.get("type"),
+            "server": item.get("server"),
+            "tool": item.get("tool"),
+            "status": item.get("status"),
+        }
+
+    tool_discovery_events = [
+        _event_item_summary(event)
+        for idx, event in enumerate(events)
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") in allowed_discovery_item_types
+        and (first_computer_use_mcp_index is None or idx < first_computer_use_mcp_index)
+    ]
+    non_native_tool_calls = [
+        _event_item_summary(event)
+        for idx, event in enumerate(events)
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") not in {"agent_message", "mcp_tool_call"}
+        and not (
+            event["item"].get("type") in allowed_discovery_item_types
+            and (first_computer_use_mcp_index is None or idx < first_computer_use_mcp_index)
+        )
+    ]
+    non_computer_use_mcp_calls = [
+        {
+            "server": event["item"].get("server"),
+            "tool": event["item"].get("tool"),
+            "status": event["item"].get("status"),
+        }
+        for event in events
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("type") == "mcp_tool_call"
+        and event["item"].get("server") != "computer-use"
+    ]
+    list_apps_completed = _completed_mcp_tool_count(events, "list_apps")
+    get_app_state_completed = _completed_mcp_tool_count(events, "get_app_state")
+    set_value_completed = _completed_mcp_tool_count(events, "set_value")
+    press_key_completed = _completed_mcp_tool_count(events, "press_key")
+    token_verified = _mcp_tool_result_contains(
+        events, "get_app_state", chrome_token, app="com.google.Chrome"
+    ) or _mcp_tool_result_contains(events, "set_value", chrome_token, app="com.google.Chrome")
+    chrome_seen = _mcp_tool_result_contains(events, "list_apps", "com.google.Chrome")
+    success_marker = _agent_message_contains_line(events, success_line)
+    fallback_patterns = (
+        r"(?im)^\s*(?:/usr/local/bin/|/opt/homebrew/bin/|/usr/bin/)?cliclick\b",
+        r"(?im)^\s*(?:/usr/sbin/|/usr/bin/)?screencapture\b",
+        r"(?im)^\s*(?:/usr/bin/)?osascript\b",
+        r"mcp: keyboard-maestro/",
+        r"mcp: browser-use/",
+        r"mcp: browser/",
+    )
+    fallback_used = (
+        command_execution_count > 0
+        or bool(non_native_tool_calls)
+        or bool(non_computer_use_mcp_calls)
+        or any(re.search(pattern, stdout) for pattern in fallback_patterns)
+    )
+    failure_class = ""
+    error = ""
+    if timed_out:
+        failure_class = "chrome_smoke_timeout"
+        error = f"codex exec timed out after {NATIVE_SMOKE_TIMEOUT_SECONDS}s"
+    elif returncode != 0:
+        failure_class = "chrome_smoke_codex_exec_failed"
+        error = f"codex exec exited with {returncode}"
+    elif not structured_events_found:
+        failure_class = "chrome_smoke_no_structured_events"
+        error = (
+            "codex exec --json produced no structured events"
+            if not events
+            else f"codex exec --json stdout contained {unstructured_stdout_lines} unstructured lines"
+        )
+    elif fallback_used:
+        failure_class = "chrome_fallback_used"
+        error = (
+            f"non-native tool usage detected: command_execution_count={command_execution_count} "
+            f"non_native_tool_calls={non_native_tool_calls} "
+            f"non_computer_use_mcp_calls={non_computer_use_mcp_calls}"
+        )
+    elif list_apps_completed < 1 or not chrome_seen:
+        failure_class = "chrome_list_apps_failed"
+        error = f"list_apps_completed={list_apps_completed} chrome_seen={chrome_seen}"
+    elif get_app_state_completed < 2:
+        failure_class = "chrome_get_app_state_failed"
+        error = f"get_app_state_completed={get_app_state_completed}"
+    elif set_value_completed < 1 or not token_verified:
+        failure_class = "chrome_set_value_failed"
+        error = f"set_value_completed={set_value_completed} token_verified={token_verified}"
+    elif press_key_completed < 2 or not success_marker:
+        failure_class = "chrome_interaction_failed"
+        error = f"press_key_completed={press_key_completed} success_marker={success_marker}"
+    if setup_error and not error:
+        error = setup_error
+
+    ok = not failure_class
+    payload = {
+        "recorded_at": int(time.time()),
+        "started_at": started_at,
+        "source": "codex_app_mcp_tool",
+        "runner": "codex-computer-use-guard run-chrome-smoke",
+        "smoke_context": _current_native_smoke_context(),
+        "verified_by_guard_runner": True,
+        "fallback_used": fallback_used,
+        "codex_exec": str(OPENAI_CODEX_EXEC),
+        "codex_exec_exit_code": returncode,
+        "codex_exec_timed_out": timed_out,
+        "structured_events_found": structured_events_found,
+        "unstructured_stdout_lines": unstructured_stdout_lines,
+        "command_execution_count": command_execution_count,
+        "tool_discovery_events": tool_discovery_events,
+        "non_native_tool_calls": non_native_tool_calls,
+        "non_computer_use_mcp_calls": non_computer_use_mcp_calls,
+        "list_apps_completed": list_apps_completed,
+        "get_app_state_completed": get_app_state_completed,
+        "set_value_completed": set_value_completed,
+        "press_key_completed": press_key_completed,
+        "chrome_seen": chrome_seen,
+        "chrome_set_value_verified": token_verified,
+        "success_marker": success_marker,
+        "interaction_token": chrome_token,
+        "smoke_target": "com.google.Chrome",
+        "ok": ok,
+        "failure_class": failure_class,
+        "error": error,
+        "stdout_tail": _compact_stdout_tail(stdout),
+        "stderr_tail": _compact_stdout_tail(stderr, lines=40),
+    }
+    status = _chrome_smoke_status(payload)
+    _write_chrome_smoke(status)
     cleanup_stale_mcp_clients(kill_duplicates=False)
     return status
 
@@ -3081,6 +3372,7 @@ def ensure() -> dict[str, Any]:
     discoverable = configured and mcp_tools_ok
     runtime_ready = discoverable and runtime_ok and service_runtime_ok and service_warm_ok and service_ready
     native_smoke = _native_smoke_status()
+    chrome_smoke = _chrome_smoke_status()
     native_smoke_refreshed = False
     native_smoke_refresh_error = ""
     if runtime_ready and not native_smoke.get("operational"):
@@ -3123,6 +3415,7 @@ def ensure() -> dict[str, Any]:
         "health_layers": health_layers,
         "operational_state": operational_state,
         "native_smoke": native_smoke,
+        "chrome_smoke": chrome_smoke,
         "native_smoke_refreshed": native_smoke_refreshed,
         "native_smoke_refresh_error": native_smoke_refresh_error,
         "mcp_client_ownership": ownership,
@@ -3309,6 +3602,7 @@ def status() -> dict[str, Any]:
     dialog_autopilot = dialog_autopilot_status()
     direct_mcp_absence = _direct_mcp_absence_status(config_text)
     native_smoke = _native_smoke_status()
+    chrome_smoke = _chrome_smoke_status()
     ownership = mcp_client_ownership_status()
     configured = (
         cache_valid
@@ -3358,6 +3652,7 @@ def status() -> dict[str, Any]:
         "health_layers": health_layers,
         "operational_state": operational_state,
         "native_smoke": native_smoke,
+        "chrome_smoke": chrome_smoke,
         "mcp_client_ownership": ownership,
         "native_target_safety_boundaries": _native_target_safety_boundaries(),
         "openai_codex_app": str(OPENAI_CODEX_APP),
@@ -3445,12 +3740,20 @@ def main(argv: list[str]) -> int:
             payload = _record_native_smoke_from_stdin()
         elif command in {"run-native-smoke", "fresh-native-smoke", "fresh-smoke"}:
             payload = _run_native_smoke()
+        elif command in {"run-chrome-smoke", "fresh-chrome-smoke", "chrome-smoke"}:
+            payload = _run_chrome_smoke()
         elif command == "clear-native-smoke":
             try:
                 NATIVE_SMOKE_STATUS.unlink()
             except FileNotFoundError:
                 pass
             payload = _native_smoke_status()
+        elif command == "clear-chrome-smoke":
+            try:
+                CHROME_SMOKE_STATUS.unlink()
+            except FileNotFoundError:
+                pass
+            payload = _chrome_smoke_status()
         elif command == "cleanup-mcp-clients":
             force_duplicates = "--force-duplicates" in argv
             if force_duplicates:
@@ -3518,6 +3821,7 @@ def main(argv: list[str]) -> int:
                 and GUARD_BACKUP.is_file()
             )
             native_smoke = _native_smoke_status()
+            chrome_smoke = _chrome_smoke_status()
             ownership = mcp_client_ownership_status()
             runtime_ready = (
                 structural_ok
@@ -3544,6 +3848,7 @@ def main(argv: list[str]) -> int:
                 "health_layers": health_layers,
                 "operational_state": operational_state,
                 "native_smoke": native_smoke,
+                "chrome_smoke": chrome_smoke,
                 "mcp_client_ownership": ownership,
                 "native_target_safety_boundaries": _native_target_safety_boundaries(),
                 "command": command,
