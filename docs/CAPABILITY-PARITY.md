@@ -106,6 +106,9 @@ The installed route can be healthy while an already-open Codex thread still has
 stale MCP transport state from before repair. If `mcp__computer_use__` is
 visible but a call returns `Transport closed`, parity is proven only after a
 fresh thread or another live thread successfully calls `mcp__computer_use__.list_apps`.
+The smoke cleanup is best-effort; native parity is based on structured MCP
+events and fallback-free interaction evidence, not on a brittle final text
+marker about whether the temporary Calculator window closed.
 
 ## Google Chrome Native Use
 

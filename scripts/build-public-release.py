@@ -36,6 +36,7 @@ PUBLIC_EXACT = {
     "docs/CAPABILITY-PARITY.md",
     "docs/CURRENT-STATE.md",
     "docs/INSTALL.md",
+    "docs/releases/v0.1.12.md",
     "docs/releases/v0.1.11.md",
     "docs/RUNBOOK.md",
     "docs/WHAT-IS-COMPUTER-USE.md",

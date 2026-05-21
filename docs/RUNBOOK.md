@@ -106,6 +106,11 @@ Expected:
 - `smoke_cleanup.errors=[]`
 - `unstructured_stdout_lines=0`
 
+The cleanup step is intentionally best-effort. A passing smoke proves native
+interaction through structured MCP evidence and attempts to close the temporary
+Calculator surface, but it does not fail merely because the final assistant text
+does not say that the app quit.
+
 ## Native Chrome Smoke
 
 Use this when the task specifically depends on the user's normal Google Chrome

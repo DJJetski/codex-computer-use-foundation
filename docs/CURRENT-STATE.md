@@ -105,6 +105,12 @@ Expected high-level result:
   smoke, with `target_not_frontmost_verified=true`. The value is recorded as
   evidence, not assumed, because older plugin builds have reported different
   frontmost state during the same smoke flow.
+- Native interaction health is decided from structured MCP evidence, not only
+  from the final assistant success line. Calculator cleanup is still attempted
+  with `press_key`, but closing the temporary Calculator window is best-effort;
+  the required proof is native `list_apps`, `get_app_state`, element-index
+  `click`, `type_text`, display verification, cleanup keypress completion, and
+  `fallback_used=false`.
 - Google Chrome can be validated separately with
   `$HOME/.codex/bin/codex-computer-use-guard chrome-smoke`. Current live
   validation on Codex 26.519.22136 with Computer Use plugin 1.0.799 uses native

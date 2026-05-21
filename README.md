@@ -167,6 +167,17 @@ from `mcp__computer_use__`, treat that current thread as stale MCP state. Open a
 fresh Codex thread and prove the native path again with
 `mcp__computer_use__.list_apps`; do not switch to fallback automation.
 
+## Release Evidence
+
+Each published release is built from a sanitized source package, not from a
+maintainer's live `$HOME/.codex` runtime. The release checks include unit tests,
+installer dry-run, live installed-state verification, secret scan, public
+release audit, package build, and release drill against a temporary home.
+
+Release notes describe the exact capability and validation changes for that
+package. Start with the latest note:
+[`docs/releases/v0.1.12.md`](docs/releases/v0.1.12.md).
+
 ## Native Tool Surface
 
 The guard does not treat a partial tool list as healthy. The native launcher

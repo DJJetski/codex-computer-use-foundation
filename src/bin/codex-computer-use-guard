@@ -3264,6 +3264,34 @@ def _set_key_in_section(lines: list[str], header: str, key: str, value: str) -> 
     lines.insert(start + 1, f"{key} = {value}")
 
 
+def _dedupe_duplicate_scalar_keys(lines: list[str]) -> None:
+    """Remove duplicate scalar assignments that make Codex reject config.toml.
+
+    Codex may refuse to start if a plugin or skill table has the same scalar key
+    twice, even when both values are identical. Keep the first assignment in
+    each table so later guard repairs can update that canonical line.
+    """
+    key_re = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
+    seen: set[str] = set()
+    idx = 0
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            seen.clear()
+            idx += 1
+            continue
+        match = key_re.match(lines[idx])
+        if match is None:
+            idx += 1
+            continue
+        key = match.group(1)
+        if key in seen:
+            del lines[idx]
+            continue
+        seen.add(key)
+        idx += 1
+
+
 def _ensure_plugin_section(lines: list[str]) -> None:
     section = _find_section(lines, PLUGIN_HEADER)
     if section is None:
@@ -3468,6 +3496,7 @@ def ensure_config(cache_root: Path) -> bool:
     original = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
     lines = original.splitlines()
     mcp_command = _mcp_command_path()
+    _dedupe_duplicate_scalar_keys(lines)
     _ensure_notify(lines, COMPUTER_USE_NOTIFY)
     _ensure_plugin_section(lines)
     _ensure_chrome_plugin_section(lines)

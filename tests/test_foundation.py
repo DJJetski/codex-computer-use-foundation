@@ -214,6 +214,28 @@ class FoundationTests(unittest.TestCase):
         self.assertIn('"post_smoke_mcp_cleanup": post_smoke_mcp_cleanup', guard)
         self.assertNotIn("${{", guard)
 
+    def test_guard_dedupes_duplicate_scalar_keys_before_codex_exec(self) -> None:
+        guard = load_guard_module()
+        lines = [
+            'model = "gpt-5"',
+            "",
+            "[[skills.config]]",
+            'path = "/tmp/a/SKILL.md"',
+            "enabled = true",
+            "",
+            "enabled = true",
+            "",
+            "[plugins.\"computer-use@openai-bundled\"]",
+            "enabled = false",
+            "enabled = true",
+        ]
+        guard._dedupe_duplicate_scalar_keys(lines)
+        text = "\n".join(lines)
+        self.assertEqual(text.count("[[skills.config]]"), 1)
+        self.assertEqual(text.count('path = "/tmp/a/SKILL.md"'), 1)
+        self.assertEqual(text.count("enabled = true"), 1)
+        self.assertIn("enabled = false", text)
+
     def test_guard_status_mcp_probes_skip_launcher_repair(self) -> None:
         guard = load_guard_module()
         calls: list[str | None] = []
