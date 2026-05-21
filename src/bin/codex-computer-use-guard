@@ -2654,8 +2654,8 @@ def _remove_path(path: Path) -> bool:
 def ensure_plugin_skill_suppressed(plugin_root: Path) -> bool:
     """Keep plugin MCP discovery, but do not publish a second visible skill.
 
-    Codex 1.0.793 does not filter skill picker entries by the old shim's
-    `metadata.hidden` or `policy.allow_implicit_invocation` fields. Leaving a
+    Current Codex builds do not reliably filter skill picker entries by the old
+    shim's `metadata.hidden` or `policy.allow_implicit_invocation` fields. Leaving a
     plugin `SKILL.md` therefore creates a visible "Computer Use Shim" entry.
     The native tools are still discovered through the plugin `.mcp.json`, so the
     plugin skill root should be absent and the canonical user-facing skill under

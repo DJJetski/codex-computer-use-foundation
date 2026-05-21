@@ -100,9 +100,11 @@ Expected high-level result:
   newest client and removing older duplicate transports. Duplicate parent
   groups remain fail-closed evidence until `ensure`, explicit cleanup, or a
   thread restart removes them.
-- The Calculator smoke attempts to restore Codex focus before native actions,
-  but Computer Use 1.0.793 currently reports the Calculator target as
-  frontmost during the run. The value is recorded as evidence, not hidden.
+- Current live validation on Codex 26.519.22136 with Computer Use plugin
+  1.0.799 reports the Calculator target as not frontmost during the native
+  smoke, with `target_not_frontmost_verified=true`. The value is recorded as
+  evidence, not assumed, because older plugin builds have reported different
+  frontmost state during the same smoke flow.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 

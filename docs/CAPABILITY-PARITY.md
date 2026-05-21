@@ -48,8 +48,9 @@ surface verified from the installed OpenAI Computer Use plugin is:
 | `type_text` | Type literal text through the native tool path. |
 
 The guard, verifier, public audit, README, runbook, and canonical skill all use
-this exact list. A missing tool fails discovery before the runtime can report
-full health.
+this exact list. The same list was verified against the installed Codex
+26.519.22136 / Computer Use plugin 1.0.799 runtime. A missing tool fails
+discovery before the runtime can report full health.
 
 ## API Computer Use Versus Codex App Computer Use
 
@@ -97,7 +98,9 @@ app. For health evidence, the smoke uses
 accessibility element indexes from `get_app_state` so a passing result proves
 semantic app-state control; coordinate clicks remain part of the normal native
 tool surface. The payload records whether Calculator appeared frontmost during
-the smoke so non-frontmost evidence is visible instead of assumed.
+the smoke so non-frontmost evidence is visible instead of assumed. Current live
+validation on Computer Use plugin 1.0.799 verified the Calculator target as not
+frontmost.
 
 The installed route can be healthy while an already-open Codex thread still has
 stale MCP transport state from before repair. If `mcp__computer_use__` is
