@@ -112,6 +112,13 @@ Expected high-level result:
   and records the result in `chrome_smoke`. This Chrome smoke is additional
   target-app evidence; it is not a fallback and does not replace the generic
   Calculator health smoke.
+- The official Codex Chrome Extension route is reported separately as
+  `chrome_plugin` and can be checked with
+  `$HOME/.codex/bin/codex-computer-use-guard chrome-plugin-status`. The guard
+  keeps `chrome@openai-bundled` enabled and checks the bundled plugin helper
+  scripts for the native host manifest and active-profile extension install,
+  but it does not install the Chrome extension or native host outside the
+  official Codex Plugins setup flow.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 

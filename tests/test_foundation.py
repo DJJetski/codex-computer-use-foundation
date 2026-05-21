@@ -721,6 +721,21 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("browser automation", smoke_body)
         self.assertIn("chrome_native_smoke", smoke_body)
 
+    def test_chrome_plugin_status_uses_official_extension_checks_without_installing_host(self) -> None:
+        guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
+        function_start = guard_source.index("def chrome_plugin_status()")
+        function_end = guard_source.index("def _computer_use_manifest_without_skills", function_start)
+        status_body = guard_source[function_start:function_end]
+
+        self.assertIn("chrome@openai-bundled", guard_source)
+        self.assertIn("CHROME_CACHE_BASE", guard_source)
+        self.assertIn("def ensure_chrome_cache()", guard_source)
+        self.assertIn("check-native-host-manifest.js", status_body)
+        self.assertIn("check-extension-installed.js", status_body)
+        self.assertIn("chrome-is-running.js", status_body)
+        self.assertIn("Remove and re-add the Chrome plugin from Codex Plugins", status_body)
+        self.assertNotIn("installManifest.mjs", status_body)
+
     def test_native_smoke_detects_coordinate_click_attempts(self) -> None:
         guard = load_guard_module()
         events = [
@@ -2000,6 +2015,27 @@ class FoundationTests(unittest.TestCase):
         disabled_arrays = re.findall(r"disabled_tools\s*=\s*\[(.*?)\]", scrubbed, re.DOTALL)
         self.assertFalse(any("computer-use@openai-bundled" in item for item in disabled_arrays))
         self.assertFalse(guard._computer_use_disabled(scrubbed))
+
+    def test_guard_enables_and_unsuppresses_chrome_plugin_route(self) -> None:
+        guard = load_guard_module()
+        lines = [
+            '[plugins."browser-use@openai-bundled"]',
+            "enabled = true",
+            "",
+            "[tool_suggest]",
+            'disabled_tools = ["chrome@openai-bundled", { type = "plugin", id = "chrome@openai-bundled" }, "other-tool"]',
+        ]
+
+        guard._ensure_chrome_plugin_section(lines)
+        guard._ensure_tool_suggest_allows_computer_use(lines)
+        scrubbed = guard._scrub_computer_use_disabled_tool("\n".join(lines).rstrip() + "\n")
+
+        self.assertIn('[plugins."chrome@openai-bundled"]', scrubbed)
+        self.assertIn("enabled = true", scrubbed)
+        self.assertIn('"other-tool"', scrubbed)
+        disabled_arrays = re.findall(r"disabled_tools\s*=\s*\[(.*?)\]", scrubbed, re.DOTALL)
+        self.assertFalse(any("chrome@openai-bundled" in item for item in disabled_arrays))
+        self.assertFalse(guard._plugin_disabled(scrubbed, "chrome@openai-bundled"))
 
     def test_installer_refuses_manifest_target_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

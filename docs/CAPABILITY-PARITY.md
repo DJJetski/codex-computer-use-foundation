@@ -125,6 +125,28 @@ include `text`. For that specific settable Chrome field, native parity is better
 served by `set_value`, because it remains inside the official Computer Use MCP
 surface and is verifiable in `get_app_state`.
 
+## Codex Chrome Extension Boundary
+
+OpenAI now documents a separate Codex Chrome Extension path for browser work
+that needs the user's signed-in Chrome state. That path is not the same as
+native Computer Use and it is not the in-app Browser plugin:
+
+- local development servers, file-backed previews, and public pages that do not
+  require sign-in should use the in-app browser first;
+- signed-in websites, existing Chrome tabs, browser extensions, cookies, and
+  Chrome-profile state should use the official `chrome@openai-bundled` plugin
+  and Codex Chrome Extension;
+- desktop GUI tasks outside browser-page automation should continue to use
+  native Computer Use when the target app is allowed.
+
+The guard reports this extension route separately as `chrome_plugin` and through
+`codex-computer-use-guard chrome-plugin-status`. It keeps the bundled Chrome
+plugin discoverable and enabled in Codex config and checks the official plugin
+helper scripts for the native host manifest and active-profile extension
+install. It does not install or repair the native host manifest directly,
+because the official setup flow belongs to Codex Plugins and the Chrome
+Extension permission prompts.
+
 The smoke does not claim arbitrary control of minimized windows, off-Space
 windows, invisible windows, Terminal, Codex itself, administrator prompts, or
 security/privacy dialogs. If OpenAI expands the Codex app MCP surface or

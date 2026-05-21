@@ -111,8 +111,11 @@ Files and paths:
 Responsibilities:
 
 - Keep `computer-use@openai-bundled` enabled.
+- Keep `chrome@openai-bundled` enabled and cached when the official bundled
+  Chrome plugin is present, so extension-backed Chrome discovery does not
+  interfere with Computer Use tool discovery.
 - Remove `tool_suggest.disabled_tools` entries for
-  `computer-use@openai-bundled`.
+  `computer-use@openai-bundled` and `chrome@openai-bundled`.
 - Keep marketplace mirrors patched so plugin loading uses the local native
   launcher.
 - Keep direct `[mcp_servers.computer-use*]` aliases absent. Direct aliases start

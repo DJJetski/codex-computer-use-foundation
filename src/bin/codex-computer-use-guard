@@ -102,9 +102,11 @@ OPENAI_TEAM_ID = "2DC432GLL2"
 
 BUNDLED_MARKETPLACE = OPENAI_CODEX_APP / "Contents" / "Resources" / "plugins" / "openai-bundled"
 COMPUTER_USE_SOURCE = BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+CHROME_SOURCE = BUNDLED_MARKETPLACE / "plugins" / "chrome"
 PATCHED_BUNDLED_MARKETPLACE = CODEX_HOME / "plugins" / "marketplaces" / "openai-bundled"
 TMP_BUNDLED_MARKETPLACE = CODEX_HOME / ".tmp" / "bundled-marketplaces" / "openai-bundled"
 CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "computer-use"
+CHROME_CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "chrome"
 RUNTIME_BASE = CODEX_HOME / "computer-use"
 RUNTIME_APP = RUNTIME_BASE / "Codex Computer Use.app"
 SIGNED_MARKETPLACE_APP = PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use" / "Codex Computer Use.app"
@@ -170,6 +172,7 @@ __attribute__((swiftcall)) void swift_task_removePriorityEscalationHandler(void 
 """.strip()
 
 PLUGIN_HEADER = '[plugins."computer-use@openai-bundled"]'
+CHROME_PLUGIN_HEADER = '[plugins."chrome@openai-bundled"]'
 BROWSER_HEADER = '[plugins."browser-use@openai-bundled"]'
 MARKETPLACE_HEADER = "[marketplaces.openai-bundled]"
 DIRECT_MCP_HEADER = "[mcp_servers.computer-use]"
@@ -185,6 +188,8 @@ LEGACY_DIRECT_MCP_HEADERS = [
 ALL_DIRECT_MCP_HEADERS = DIRECT_MCP_HEADERS + LEGACY_DIRECT_MCP_HEADERS
 TOOL_SUGGEST_HEADER = "[tool_suggest]"
 COMPUTER_USE_PLUGIN_ID = "computer-use@openai-bundled"
+CHROME_PLUGIN_ID = "chrome@openai-bundled"
+GUARDED_PLUGIN_IDS = (COMPUTER_USE_PLUGIN_ID, CHROME_PLUGIN_ID)
 COMPUTER_USE_DISABLED_TOOL_RE = re.compile(
     r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"computer-use@openai-bundled"\s*\}'
 )
@@ -1454,15 +1459,21 @@ def dialog_autopilot_status() -> dict[str, Any]:
     return _dialog_autopilot("status")
 
 
-def _load_plugin_manifest(source: Path) -> dict[str, Any]:
+def _load_named_plugin_manifest(source: Path, expected_name: str) -> dict[str, Any]:
     path = source / ".codex-plugin" / "plugin.json"
     with path.open("r", encoding="utf-8-sig") as fh:
         payload = json.load(fh)
-    if payload.get("name") != "computer-use":
+    if payload.get("name") != expected_name:
         raise RuntimeError(f"unexpected plugin name in {path}")
     version = str(payload.get("version") or "").strip()
     if not version:
-        raise RuntimeError(f"missing computer-use plugin version in {path}")
+        raise RuntimeError(f"missing {expected_name} plugin version in {path}")
+    return payload
+
+
+def _load_plugin_manifest(source: Path) -> dict[str, Any]:
+    payload = _load_named_plugin_manifest(source, "computer-use")
+    path = source / ".codex-plugin" / "plugin.json"
     if payload.get("mcpServers") != "./.mcp.json":
         raise RuntimeError(f"unexpected computer-use mcpServers in {path}")
     return payload
@@ -1791,6 +1802,152 @@ def _bundled_marketplace_version_ok(marketplace: Path, expected_version: str) ->
     except Exception:
         return False
     return payload.get("name") == "computer-use" and str(payload.get("version") or "") == expected_version
+
+
+def _chrome_plugin_root(marketplace: Path = PATCHED_BUNDLED_MARKETPLACE) -> Path:
+    return marketplace / "plugins" / "chrome"
+
+
+def _chrome_plugin_copy_ok(plugin: Path) -> bool:
+    manifest = plugin / ".codex-plugin" / "plugin.json"
+    extension_config = plugin / "scripts" / "extension-id.json"
+    native_host_check = plugin / "scripts" / "check-native-host-manifest.js"
+    extension_check = plugin / "scripts" / "check-extension-installed.js"
+    node = plugin / "app-server-runtime" / "node"
+    try:
+        with manifest.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    return (
+        payload.get("name") == "chrome"
+        and (plugin / "skills" / "chrome" / "SKILL.md").is_file()
+        and extension_config.is_file()
+        and native_host_check.is_file()
+        and extension_check.is_file()
+        and os.access(node, os.X_OK)
+    )
+
+
+def _chrome_plugin_marketplace_ok(marketplace: Path = PATCHED_BUNDLED_MARKETPLACE) -> bool:
+    return _chrome_plugin_copy_ok(_chrome_plugin_root(marketplace))
+
+
+def _chrome_cache_valid(cache_root: Path, expected_version: str) -> bool:
+    try:
+        with (cache_root / ".codex-plugin" / "plugin.json").open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    return (
+        payload.get("name") == "chrome"
+        and str(payload.get("version") or "") == expected_version
+        and _chrome_plugin_copy_ok(cache_root)
+    )
+
+
+def ensure_chrome_cache() -> tuple[str, Path, bool]:
+    manifest = _load_named_plugin_manifest(CHROME_SOURCE, "chrome")
+    version = str(manifest["version"])
+    dest = CHROME_CACHE_BASE / version
+    changed = False
+    if not _chrome_cache_valid(dest, version):
+        _copy_cache(CHROME_SOURCE, dest)
+        changed = True
+    return version, dest, changed
+
+
+def _installed_chrome_plugin_root() -> tuple[str, Path, bool]:
+    try:
+        manifest = _load_named_plugin_manifest(CHROME_SOURCE, "chrome")
+        version = str(manifest["version"])
+    except Exception:
+        return "", _chrome_plugin_root(), False
+    cache_root = CHROME_CACHE_BASE / version
+    if _chrome_cache_valid(cache_root, version):
+        return version, cache_root, True
+    return version, _chrome_plugin_root(), False
+
+
+def _run_chrome_plugin_check(script_name: str, *, plugin: Path, timeout: int = 10) -> dict[str, Any]:
+    node = plugin / "app-server-runtime" / "node"
+    script = plugin / "scripts" / script_name
+    if not _chrome_plugin_copy_ok(plugin):
+        return {
+            "ok": False,
+            "exit_code": None,
+            "error": f"Chrome plugin copy is incomplete: {plugin}",
+        }
+    if not script.is_file():
+        return {"ok": False, "exit_code": None, "error": f"missing Chrome plugin script: {script}"}
+    try:
+        result = _run_capture([str(node), str(script), "--json"], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "exit_code": None, "error": f"{script_name} timed out"}
+    payload: dict[str, Any]
+    try:
+        parsed = json.loads(result.stdout)
+        payload = parsed if isinstance(parsed, dict) else {"output": parsed}
+    except Exception:
+        payload = {"output": result.stdout.strip()}
+    payload["ok"] = result.returncode == 0
+    payload["exit_code"] = result.returncode
+    if result.returncode != 0 and "error" not in payload:
+        problem = payload.get("problem")
+        payload["error"] = str(problem or "\n".join(result.stdout.rstrip().splitlines()[-6:]))
+    return payload
+
+
+def chrome_plugin_status() -> dict[str, Any]:
+    config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
+    plugin_enabled = bool(
+        re.search(r'\[plugins\."chrome@openai-bundled"\]\s+enabled\s*=\s*true', config_text)
+    )
+    disabled = _plugin_disabled(config_text, CHROME_PLUGIN_ID)
+    chrome_version, active_plugin_root, cache_ok = _installed_chrome_plugin_root()
+    marketplace_ok = _chrome_plugin_marketplace_ok()
+    plugin_copy_ok = _chrome_plugin_copy_ok(active_plugin_root)
+    native_host = _run_chrome_plugin_check("check-native-host-manifest.js", plugin=active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
+    extension = _run_chrome_plugin_check("check-extension-installed.js", plugin=active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
+    chrome_running = _run_chrome_plugin_check("chrome-is-running.js", plugin=active_plugin_root, timeout=5) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
+    ready = bool(plugin_enabled and not disabled and marketplace_ok and cache_ok and native_host.get("ok") and extension.get("ok"))
+    next_step = ""
+    if not marketplace_ok:
+        next_step = "Run codex-computer-use-guard ensure-config to refresh the bundled Chrome plugin mirror."
+    elif not cache_ok:
+        next_step = "Run codex-computer-use-guard ensure-config to install the bundled Chrome plugin cache copy."
+    elif not plugin_enabled or disabled:
+        next_step = "Run codex-computer-use-guard ensure-config to enable the official Chrome plugin route."
+    elif not native_host.get("ok"):
+        next_step = "Remove and re-add the Chrome plugin from Codex Plugins, then follow the setup flow."
+    elif not extension.get("ok"):
+        next_step = "Install and enable the Codex Chrome Extension in the active Chrome profile."
+    elif not chrome_running.get("ok"):
+        next_step = "Open Google Chrome before starting an extension-backed Chrome task."
+    return {
+        "ok": ready,
+        "ready": ready,
+        "plugin_enabled": plugin_enabled,
+        "disabled": disabled,
+        "marketplace_ok": marketplace_ok,
+        "cache_ok": cache_ok,
+        "version": chrome_version,
+        "plugin_root": str(active_plugin_root),
+        "extension_id": (extension.get("extensionId") or native_host.get("expectedExtensionId") or ""),
+        "native_host": native_host,
+        "extension": extension,
+        "chrome_running": chrome_running,
+        "next_step": next_step,
+    }
 
 
 def _computer_use_manifest_without_skills(source_manifest: Path) -> str | None:
@@ -3127,6 +3284,28 @@ def _ensure_plugin_section(lines: list[str]) -> None:
     _set_key_in_section(lines, PLUGIN_HEADER, "enabled", "true")
 
 
+def _ensure_chrome_plugin_section(lines: list[str]) -> None:
+    section = _find_section(lines, CHROME_PLUGIN_HEADER)
+    if section is None:
+        computer_use = _find_section(lines, PLUGIN_HEADER)
+        browser = _find_section(lines, BROWSER_HEADER)
+        insert_at = None
+        if computer_use is not None:
+            insert_at = computer_use[1]
+        elif browser is not None:
+            insert_at = browser[1]
+        else:
+            for idx, line in enumerate(lines):
+                if line.startswith("[projects.") or line.startswith("[mcp_servers."):
+                    insert_at = idx
+                    break
+        if insert_at is None:
+            insert_at = len(lines)
+        lines[insert_at:insert_at] = ["", CHROME_PLUGIN_HEADER, "enabled = true"]
+        return
+    _set_key_in_section(lines, CHROME_PLUGIN_HEADER, "enabled", "true")
+
+
 def _ensure_marketplace(lines: list[str]) -> None:
     if _find_section(lines, MARKETPLACE_HEADER) is None:
         lines.extend(
@@ -3183,18 +3362,30 @@ def _ensure_direct_mcp_server(lines: list[str], binary: Path) -> None:
 
 
 def _computer_use_disabled(config_text: str) -> bool:
-    return any(
-        COMPUTER_USE_PLUGIN_ID in match.group("body")
-        for match in DISABLED_TOOLS_ARRAY_RE.finditer(config_text)
-    )
+    return _plugin_disabled(config_text, COMPUTER_USE_PLUGIN_ID)
+
+
+def _plugin_disabled(config_text: str, plugin_id: str) -> bool:
+    return any(plugin_id in match.group("body") for match in DISABLED_TOOLS_ARRAY_RE.finditer(config_text))
 
 
 def _scrub_disabled_tools_array(match: re.Match[str]) -> str:
     body = match.group("body")
-    if COMPUTER_USE_PLUGIN_ID not in body:
+    if not any(plugin_id in body for plugin_id in GUARDED_PLUGIN_IDS):
         return match.group(0)
-    body = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.sub("", body)
-    body = COMPUTER_USE_DISABLED_TOOL_STRING_RE.sub("", body)
+    for plugin_id in GUARDED_PLUGIN_IDS:
+        object_re = re.compile(
+            r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"' + re.escape(plugin_id) + r'"\s*\}',
+            re.DOTALL,
+        )
+        string_re = re.compile(
+            r'(?P<prefix>,\s*)?(?P<quote>["\'])'
+            + re.escape(plugin_id)
+            + r'(?P=quote)(?P<suffix>\s*,)?',
+            re.DOTALL,
+        )
+        body = object_re.sub("", body)
+        body = string_re.sub("", body)
     body = re.sub(r",\s*,", ",", body, flags=re.DOTALL)
     body = re.sub(r"^\s*,\s*", "", body, flags=re.DOTALL)
     body = re.sub(r"\s*,\s*$", "", body, flags=re.DOTALL)
@@ -3204,10 +3395,12 @@ def _scrub_disabled_tools_array(match: re.Match[str]) -> str:
 
 
 def _scrub_computer_use_disabled_tool(config_text: str) -> str:
-    object_pattern = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.pattern
-    scrubbed = re.sub(r",\s*" + object_pattern, "", config_text, flags=re.DOTALL)
-    scrubbed = re.sub(object_pattern + r"\s*,\s*", "", scrubbed, flags=re.DOTALL)
-    scrubbed = COMPUTER_USE_DISABLED_TOOL_TEXT_RE.sub("", scrubbed)
+    scrubbed = config_text
+    for plugin_id in GUARDED_PLUGIN_IDS:
+        object_pattern = r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"' + re.escape(plugin_id) + r'"\s*\}'
+        scrubbed = re.sub(r",\s*" + object_pattern, "", scrubbed, flags=re.DOTALL)
+        scrubbed = re.sub(object_pattern + r"\s*,\s*", "", scrubbed, flags=re.DOTALL)
+        scrubbed = re.sub(object_pattern, "", scrubbed, flags=re.DOTALL)
     scrubbed = DISABLED_TOOLS_ARRAY_RE.sub(_scrub_disabled_tools_array, scrubbed)
     scrubbed = re.sub(
         r"(?m)^\s*disabled_tools\s*=\s*\[\s*\]\s*\n?",
@@ -3219,7 +3412,7 @@ def _scrub_computer_use_disabled_tool(config_text: str) -> str:
 
 def _remove_computer_use_from_disabled_tools_line(line: str) -> str | None:
     prefix, sep, value = line.partition("=")
-    if not sep or prefix.strip() != "disabled_tools" or COMPUTER_USE_PLUGIN_ID not in value:
+    if not sep or prefix.strip() != "disabled_tools" or not any(plugin_id in value for plugin_id in GUARDED_PLUGIN_IDS):
         return line
 
     stripped = value.strip()
@@ -3230,7 +3423,7 @@ def _remove_computer_use_from_disabled_tools_line(line: str) -> str | None:
     kept = [
         entry
         for entry in entries
-        if COMPUTER_USE_PLUGIN_ID not in entry
+        if not any(plugin_id in entry for plugin_id in GUARDED_PLUGIN_IDS)
         and not COMPUTER_USE_DISABLED_TOOL_RE.fullmatch(entry.strip())
     ]
     if not kept:
@@ -3277,6 +3470,7 @@ def ensure_config(cache_root: Path) -> bool:
     mcp_command = _mcp_command_path()
     _ensure_notify(lines, COMPUTER_USE_NOTIFY)
     _ensure_plugin_section(lines)
+    _ensure_chrome_plugin_section(lines)
     _ensure_direct_mcp_server(lines, mcp_command)
     _ensure_marketplace(lines)
     _ensure_tool_suggest_allows_computer_use(lines)
@@ -3300,6 +3494,7 @@ def ensure() -> dict[str, Any]:
         patched_marketplace_changed = ensure_patched_bundled_marketplace()
         tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
         version, cache_root, cache_changed = ensure_cache()
+        chrome_version, chrome_cache_root, chrome_cache_changed = ensure_chrome_cache()
         runtime_install_changed = ensure_runtime_install(cache_root, version)
         broker_backup_changed = ensure_broker_backup()
         native_launcher_changed = ensure_native_launcher()
@@ -3354,6 +3549,7 @@ def ensure() -> dict[str, Any]:
     service_ready = _service_running(service_binary) or bool(appdata_privacy.get("ok"))
     direct_mcp_absence = _direct_mcp_absence_status(config_text)
     ownership = mcp_client_ownership_status()
+    chrome_plugin = chrome_plugin_status()
     configured = (
         launch_agent_loaded
         and not computer_use_disabled
@@ -3416,6 +3612,7 @@ def ensure() -> dict[str, Any]:
         "operational_state": operational_state,
         "native_smoke": native_smoke,
         "chrome_smoke": chrome_smoke,
+        "chrome_plugin": chrome_plugin,
         "native_smoke_refreshed": native_smoke_refreshed,
         "native_smoke_refresh_error": native_smoke_refresh_error,
         "mcp_client_ownership": ownership,
@@ -3425,6 +3622,9 @@ def ensure() -> dict[str, Any]:
         "codex_app_path_state_changed": codex_app_path_state_changed,
         "openai_codex_bundle_id": app_bundle_id,
         "version": version,
+        "chrome_version": chrome_version,
+        "chrome_cache_root": str(chrome_cache_root),
+        "chrome_cache_changed": chrome_cache_changed,
         "cache_root": str(cache_root),
         "binary": str(binary),
         "mcp_command": str(mcp_command),
@@ -3526,6 +3726,10 @@ def status() -> dict[str, Any]:
     app_bundle_id = _verify_openai_codex_app()
     manifest = _load_plugin_manifest(COMPUTER_USE_SOURCE)
     version = str(manifest["version"])
+    chrome_manifest = _load_named_plugin_manifest(CHROME_SOURCE, "chrome") if CHROME_SOURCE.is_dir() else {"version": ""}
+    chrome_version = str(chrome_manifest.get("version") or "")
+    chrome_cache_root = CHROME_CACHE_BASE / chrome_version if chrome_version else CHROME_CACHE_BASE
+    chrome_cache_valid = bool(chrome_version and _chrome_cache_valid(chrome_cache_root, chrome_version))
     cache_root = CACHE_BASE / version
     config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
     runtime_install_valid = _runtime_install_valid(cache_root, version)
@@ -3603,6 +3807,7 @@ def status() -> dict[str, Any]:
     direct_mcp_absence = _direct_mcp_absence_status(config_text)
     native_smoke = _native_smoke_status()
     chrome_smoke = _chrome_smoke_status()
+    chrome_plugin = chrome_plugin_status()
     ownership = mcp_client_ownership_status()
     configured = (
         cache_valid
@@ -3653,6 +3858,7 @@ def status() -> dict[str, Any]:
         "operational_state": operational_state,
         "native_smoke": native_smoke,
         "chrome_smoke": chrome_smoke,
+        "chrome_plugin": chrome_plugin,
         "mcp_client_ownership": ownership,
         "native_target_safety_boundaries": _native_target_safety_boundaries(),
         "openai_codex_app": str(OPENAI_CODEX_APP),
@@ -3660,6 +3866,9 @@ def status() -> dict[str, Any]:
         "codex_app_path_state_exists": CODEX_APP_PATH_STATE.is_file(),
         "openai_codex_bundle_id": app_bundle_id,
         "version": version,
+        "chrome_version": chrome_version,
+        "chrome_cache_root": str(chrome_cache_root),
+        "chrome_cache_valid": chrome_cache_valid,
         "cache_valid": cache_valid,
         "runtime_install_valid": runtime_install_valid,
         "runtime_app": str(RUNTIME_APP),
@@ -3742,6 +3951,8 @@ def main(argv: list[str]) -> int:
             payload = _run_native_smoke()
         elif command in {"run-chrome-smoke", "fresh-chrome-smoke", "chrome-smoke"}:
             payload = _run_chrome_smoke()
+        elif command in {"chrome-plugin-status", "chrome-extension-status"}:
+            payload = chrome_plugin_status()
         elif command == "clear-native-smoke":
             try:
                 NATIVE_SMOKE_STATUS.unlink()
@@ -3788,6 +3999,7 @@ def main(argv: list[str]) -> int:
             patched_marketplace_changed = ensure_patched_bundled_marketplace()
             tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
             version, cache_root, cache_changed = ensure_cache()
+            chrome_version, chrome_cache_root, chrome_cache_changed = ensure_chrome_cache()
             runtime_install_changed = ensure_runtime_install(cache_root, version)
             broker_backup_changed = ensure_broker_backup()
             native_launcher_changed = ensure_native_launcher()
@@ -3822,6 +4034,7 @@ def main(argv: list[str]) -> int:
             )
             native_smoke = _native_smoke_status()
             chrome_smoke = _chrome_smoke_status()
+            chrome_plugin = chrome_plugin_status()
             ownership = mcp_client_ownership_status()
             runtime_ready = (
                 structural_ok
@@ -3849,10 +4062,14 @@ def main(argv: list[str]) -> int:
                 "operational_state": operational_state,
                 "native_smoke": native_smoke,
                 "chrome_smoke": chrome_smoke,
+                "chrome_plugin": chrome_plugin,
                 "mcp_client_ownership": ownership,
                 "native_target_safety_boundaries": _native_target_safety_boundaries(),
                 "command": command,
                 "version": version,
+                "chrome_version": chrome_version,
+                "chrome_cache_root": str(chrome_cache_root),
+                "chrome_cache_changed": chrome_cache_changed,
                 "codex_app_path_state": str(CODEX_APP_PATH_STATE),
                 "codex_app_path_state_changed": codex_app_path_state_changed,
                 "cache_root": str(cache_root),

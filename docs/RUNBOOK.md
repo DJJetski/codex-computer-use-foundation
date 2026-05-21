@@ -132,6 +132,31 @@ field. Current Computer Use plugin 1.0.799 can reject `type_text` on that field
 with `Missing required argument: text` even when the argument is present; that
 does not justify a fallback browser automation path.
 
+## Chrome Extension Plugin Status
+
+Use this when a task needs the official Codex Chrome Extension path for a
+signed-in Chrome profile:
+
+```bash
+~/.codex/bin/codex-computer-use-guard chrome-plugin-status | jq '{ok,plugin_enabled,disabled,marketplace_ok,extension_id,native_host:{ok,exit_code,error},extension:{ok,exit_code,installed,enabled,selectedProfileDirectory,error},chrome_running:{ok,running},next_step}'
+```
+
+Expected for extension-backed Chrome use:
+
+- `ok=true`
+- `plugin_enabled=true`
+- `disabled=false`
+- `marketplace_ok=true`
+- `native_host.ok=true`
+- `extension.ok=true`
+
+This diagnostic follows the official Chrome plugin boundary. It may enable the
+Codex Chrome plugin in config through `ensure-config`, but it does not install
+or repair the Chrome native host or extension itself. If the native host or
+extension checks fail, remove and re-add the Chrome plugin from Codex Plugins,
+complete the setup flow, confirm the extension shows Connected, and then start
+a fresh Codex thread.
+
 ## Preflight For A Planned GUI Task
 
 ```bash

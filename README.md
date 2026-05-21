@@ -200,6 +200,20 @@ $HOME/.codex/bin/codex-computer-use-guard chrome-smoke
 That smoke stays inside the native Computer Use MCP surface and verifies Chrome
 through `get_app_state`, `press_key`, and `set_value`.
 
+For the official Codex Chrome Extension path, use the separate extension
+diagnostic:
+
+```bash
+$HOME/.codex/bin/codex-computer-use-guard chrome-plugin-status
+```
+
+This checks that the bundled `chrome@openai-bundled` plugin is enabled, the
+local marketplace mirror contains the Chrome plugin, the Chrome native host
+manifest is present, and the active Chrome profile has the Codex Chrome
+Extension installed and enabled. It does not install the extension or native
+host; if those checks fail, re-add the Chrome plugin from Codex Plugins and
+follow the official setup flow.
+
 ## Fresh Thread Check
 
 After install or repair, open a fresh Codex thread. If native tools are not
