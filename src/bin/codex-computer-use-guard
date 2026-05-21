@@ -760,11 +760,12 @@ def _run_native_smoke() -> dict[str, Any]:
         "7. Call computer-use/type_text with app com.apple.calculator and exactly this text: 9. "
         f"8. Call computer-use/get_app_state for Calculator again and confirm the display value contains {calculator_sequence}. "
         "9. After step 8 completes, call computer-use/press_key with app com.apple.calculator and key super+w to close Calculator. "
-        "If step 9 returns App quit or noWindowsAvailable after the press_key call, treat that as cleanup complete and continue. "
+        "Treat step 9 as cleanup best-effort: if the press_key call completes but Calculator remains open, continue because the native "
+        "click/type/display evidence has already been proven. If step 9 returns App quit or noWindowsAvailable, also treat that as cleanup complete. "
         "Do not use shell commands, AppleScript, browser automation, Keyboard Maestro, screenshots, or any fallback. "
         "You must complete at least two computer-use/click calls and at least one computer-use/type_text call. "
         "Do not produce the final answer before step 9 is complete. "
-        f"Finish with exactly one final line: {success_line} only if all 9 numbered steps completed; "
+        f"Finish with exactly one final line: {success_line} only if all native interaction steps completed and step 9 was attempted; "
         "otherwise FAILURE and the precise failing step."
     )
     cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]
@@ -918,7 +919,7 @@ def _run_native_smoke() -> dict[str, Any]:
     elif click_completed < 2 or not calculator_click_verified:
         failure_class = "native_click_failed"
         error = f"click_completed={click_completed} calculator_click_verified={calculator_click_verified}"
-    elif not (type_text_completed and calculator_display_verified and cleanup_keypress_ok and success_marker):
+    elif not (type_text_completed and calculator_display_verified and cleanup_keypress_ok):
         failure_class = "native_interaction_failed"
         error = (
             f"type_text={type_text_completed} press_key_completed={press_key_completed} "
@@ -974,7 +975,6 @@ def _run_native_smoke() -> dict[str, Any]:
             and calculator_display_verified
             and type_text_completed
             and cleanup_keypress_ok
-            and success_marker
         ),
         "second_mouse_verified": click_completed >= 2 and calculator_click_verified and calculator_display_verified,
         "failure_class": failure_class,

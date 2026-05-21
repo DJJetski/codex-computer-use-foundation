@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -684,6 +685,36 @@ class FoundationTests(unittest.TestCase):
             )
         )
 
+    def test_native_smoke_health_uses_structured_evidence_not_final_text_only(self) -> None:
+        guard = load_guard_module()
+        original_context = guard._current_native_smoke_context
+        guard._current_native_smoke_context = lambda: {"guard": "test"}
+        try:
+            status = guard._native_smoke_status(
+                {
+                    "recorded_at": int(time.time()),
+                    "source": "codex_app_mcp_tool",
+                    "verified_by_guard_runner": True,
+                    "fallback_used": False,
+                    "smoke_context": {"guard": "test"},
+                    "list_apps_ok": True,
+                    "list_apps_repeat_ok": True,
+                    "get_app_state_ok": True,
+                    "structured_events_found": True,
+                    "interaction_ok": True,
+                    "second_mouse_verified": True,
+                    "success_marker": False,
+                    "calculator_close_ok": True,
+                    "cleanup_keypress_ok": True,
+                }
+            )
+        finally:
+            guard._current_native_smoke_context = original_context
+
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["operational"])
+        self.assertEqual(status["failure_class"], "")
+
     def test_native_smoke_uses_calculator_without_textedit_save(self) -> None:
         guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
         smoke_body = guard_source[
@@ -698,6 +729,7 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("do not use x/y coordinate clicks", smoke_body)
         self.assertIn("Calculator digit 7 button", smoke_body)
         self.assertIn("Calculator digit 8 button", smoke_body)
+        self.assertIn("cleanup best-effort", smoke_body)
         self.assertIn("line's leading number as element_index", smoke_body)
         self.assertIn('["/usr/bin/open", "-g", "-a", "Calculator"]', guard_source)
         self.assertIn('["/usr/bin/open", str(OPENAI_CODEX_APP)]', guard_source)
