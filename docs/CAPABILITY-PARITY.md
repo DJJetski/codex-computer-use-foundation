@@ -49,7 +49,7 @@ surface verified from the installed OpenAI Computer Use plugin is:
 
 The guard, verifier, public audit, README, runbook, and canonical skill all use
 this exact list. The same list was verified against the installed Codex
-26.519.22136 / Computer Use plugin 1.0.799 runtime. A missing tool fails
+26.519.31651 / Computer Use plugin 1.0.799 runtime. A missing tool fails
 discovery before the runtime can report full health.
 
 ## API Computer Use Versus Codex App Computer Use
@@ -148,7 +148,7 @@ verifies the token through fresh native app state. It does not use Browser Use,
 Playwright, AppleScript, Accessibility scripting, screenshots, or coordinate
 fallbacks.
 
-Current live validation on Codex 26.519.22136 with Computer Use plugin 1.0.799
+Current live validation on Codex 26.519.31651 with Computer Use plugin 1.0.799
 showed that `type_text` can fail against Chrome's address/search field with
 `Missing required argument: text` even when the native tool-call arguments
 include `text`. For that specific settable Chrome field, native parity is better

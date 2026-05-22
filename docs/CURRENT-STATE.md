@@ -100,7 +100,7 @@ Expected high-level result:
   newest client and removing older duplicate transports. Duplicate parent
   groups remain fail-closed evidence until `ensure`, explicit cleanup, or a
   thread restart removes them.
-- Current live validation on Codex 26.519.22136 with Computer Use plugin
+- Current live validation on Codex 26.519.31651 with Computer Use plugin
   1.0.799 reports the Calculator target as not frontmost during the native
   smoke, with `target_not_frontmost_verified=true`. The value is recorded as
   evidence, not assumed, because older plugin builds have reported different
@@ -113,7 +113,7 @@ Expected high-level result:
   `fallback_used=false`.
 - Google Chrome can be validated separately with
   `$HOME/.codex/bin/codex-computer-use-guard chrome-smoke`. Current live
-  validation on Codex 26.519.22136 with Computer Use plugin 1.0.799 uses native
+  validation on Codex 26.519.31651 with Computer Use plugin 1.0.799 uses native
   `get_app_state`, `press_key`, and `set_value` against `com.google.Chrome`
   and records the result in `chrome_smoke`. This Chrome smoke is additional
   target-app evidence; it is not a fallback and does not replace the generic
