@@ -127,6 +127,11 @@ It is for troubleshooting and stabilizing native Computer Use routing. It is
 not a way to bypass OpenAI usage policies, OpenAI safety checks, macOS privacy
 controls, account protections, or third-party security controls.
 
+OpenAI also documents locked computer use as a separate Codex app setting for
+active trusted Computer Use turns after the Mac locks. This project does not
+install or validate that authorization plug-in path; it only repairs and proves
+the ordinary native MCP route.
+
 ## Safety And Privacy
 
 The runtime installs into the current user's `$HOME/.codex` because that is the

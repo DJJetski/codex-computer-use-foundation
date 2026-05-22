@@ -110,6 +110,33 @@ The smoke cleanup is best-effort; native parity is based on structured MCP
 events and fallback-free interaction evidence, not on a brittle final text
 marker about whether the temporary Calculator window closed.
 
+## Locked Computer Use Boundary
+
+OpenAI now documents locked computer use as an optional Codex app mode that can
+let an active trusted Computer Use turn continue after the Mac locks. The
+official flow is enabled in Codex settings and uses an OpenAI-installed macOS
+authorization plug-in with a short-lived, scoped unlock attempt.
+
+That capability is outside this repair package's parity target. Foundation
+repairs the plugin routing, native launcher, runtime copy, permission-facing
+diagnostics, and live native smoke evidence for ordinary unlocked Codex app
+Computer Use. It must not install, alter, validate, or claim support for the
+locked-use authorization plug-in. If locked computer use is needed, use Codex's
+own Computer Use settings and OpenAI's setup flow; this repo should only verify
+that the normal native MCP route remains healthy before or after that separate
+Codex-managed setup.
+
+## Tool Exposure Versus Guard Discovery
+
+Fresh or already-open Codex threads can expose the native tool namespace lazily,
+and after app/plugin updates the active thread UI may show only part of the
+native tool schema. Do not downgrade the public parity target from that partial
+current-thread rendering alone. The authoritative local check is the guard's
+Codex-context `tools/list` discovery plus fresh MCP smoke evidence. The current
+expected MCP surface remains `list_apps`, `get_app_state`, `click`,
+`perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`,
+`press_key`, and `type_text`.
+
 ## Google Chrome Native Use
 
 Chrome is a supported native Computer Use target when the app is allowed by

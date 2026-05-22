@@ -187,6 +187,10 @@ computer-use
   `computer-use list_apps get_app_state click perform_secondary_action set_value select_text scroll drag press_key type_text`.
 - If `tool_search` exposes the namespace, prove native health with
   `mcp__computer_use__.list_apps`.
+- If the current thread exposes only a partial native tool schema, compare it
+  with the guard's Codex-context `tools/list` and live smoke evidence before
+  changing the parity target. Thread-visible tool metadata can lag the installed
+  route after updates or repair.
 - If `mcp__computer_use__` is visible but native calls return
   `Transport closed`, treat the current thread as stale MCP transport state.
   Do not use fallbacks as proof; run full `ensure` if needed and retry from a
@@ -197,6 +201,10 @@ computer-use
   thread.
 - No AppleScript, Accessibility scripting, screenshots, `cliclick`, Keyboard
   Maestro, Playwright, or VPN may be hidden inside the Computer Use MCP path.
+- Locked computer use is an OpenAI Codex app setting and authorization plug-in
+  flow, not a Foundation-owned repair surface. Foundation may verify ordinary
+  native MCP health before or after that Codex-managed setup, but must not
+  install, alter, or claim ownership of locked-use unlock plumbing.
 - Native app-level safety refusals are target policy boundaries, not structural
   repair failures. The known example is `com.apple.Terminal`: it may appear in
   `list_apps` while native `get_app_state`, click, or typing is refused for

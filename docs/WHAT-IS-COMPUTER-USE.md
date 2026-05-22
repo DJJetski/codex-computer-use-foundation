@@ -67,6 +67,11 @@ Native Codex Computer Use is better for Codex-native work because it is:
 This repo keeps that boundary strict. It repairs native Computer Use; it does
 not hide fallback tools behind the native tool name.
 
+Locked computer use is a separate Codex app setting for active trusted Computer
+Use turns after the Mac locks. This project does not install or validate that
+authorization plug-in path. It can only keep the ordinary unlocked native MCP
+route repaired and verifiable.
+
 ## Why Native Computer Use Does Not Work For Everyone
 
 Codex and the Computer Use plugin rely on several local pieces working together:

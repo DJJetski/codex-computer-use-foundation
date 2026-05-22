@@ -29,8 +29,12 @@ capabilities, read `docs/CAPABILITY-PARITY.md`.
 4. Continue only if that native call succeeds. If it returns
    `Transport closed`, the current thread has stale MCP transport state; run
    full `ensure` if needed, then retry from a fresh Codex thread.
-5. Continue only with native `mcp__computer_use__` tools for native-only tasks.
-6. Do not switch to `cliclick`, screenshots, AppleScript, Accessibility,
+5. If the current thread exposes only part of the tool schema after
+   `tool_search`, run the guard status or verifier before changing the parity
+   target. The guard's Codex-context `tools/list` check is the authoritative
+   local discovery proof for the full native surface.
+6. Continue only with native `mcp__computer_use__` tools for native-only tasks.
+7. Do not switch to `cliclick`, screenshots, AppleScript, Accessibility,
    Keyboard Maestro, or browser automation unless the user explicitly chooses a
    fallback operator path.
 
@@ -252,6 +256,15 @@ matched Foundation/Codex Little Snitch prompts for this repair system after the
 user has granted local Automation/Accessibility access; that is operator
 plumbing, not native Computer Use evidence.
 
+## Locked Computer Use
+
+OpenAI's Codex app has a separate locked computer use mode for active trusted
+Computer Use turns after the Mac locks. Treat that as Codex-managed product
+setup, not Foundation repair work. This repo must not install, modify, or
+validate the locked-use authorization plug-in. If a user needs locked use, first
+verify ordinary native Computer Use with `ensure` or `fresh-smoke`, then enable
+locked use from Codex settings and follow OpenAI's prompts.
+
 ## Backup Check
 
 ```bash
@@ -284,8 +297,10 @@ crashes matter for current health.
 1. Do not use fallback automation.
 2. Call `tool_search` for the native Computer Use terms.
 3. If exposed, call native `list_apps`.
-4. If still absent, run full `ensure`.
-5. If still absent in the same thread but guard is green, open a fresh thread or
+4. If only a partial tool schema appears, compare against guard
+   `tools/list`/verifier output before treating parity as changed.
+5. If still absent, run full `ensure`.
+6. If still absent in the same thread but guard is green, open a fresh thread or
    restart Codex. Current-thread tool metadata may have loaded before repair.
 
 ## If Guard Says `structural_ok=true` But `ok=false`

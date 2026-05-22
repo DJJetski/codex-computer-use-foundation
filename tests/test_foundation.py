@@ -474,6 +474,31 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("Do not use a fallback just because the target app is safety-blocked", skill)
         self.assertIn("If A Target App Is Safety-Blocked", runbook)
 
+    def test_locked_computer_use_stays_codex_managed(self) -> None:
+        parity = repo_path("docs/CAPABILITY-PARITY.md").read_text(encoding="utf-8")
+        runbook = repo_path("docs/RUNBOOK.md").read_text(encoding="utf-8")
+        current_state = repo_path("docs/CURRENT-STATE.md").read_text(encoding="utf-8")
+        readme = repo_path("README.md").read_text(encoding="utf-8")
+        what_is = repo_path("docs/WHAT-IS-COMPUTER-USE.md").read_text(encoding="utf-8")
+        for text in [parity, runbook, current_state, readme, what_is]:
+            with self.subTest():
+                self.assertIn("locked computer use", text.lower())
+                self.assertIn("authorization plug-in", text)
+        self.assertIn("outside this repair package's parity target", parity)
+        self.assertIn("must not install, modify, or", runbook)
+        self.assertIn("not a Foundation-owned repair surface", current_state)
+
+    def test_partial_thread_tool_exposure_is_not_parity_downgrade(self) -> None:
+        parity = repo_path("docs/CAPABILITY-PARITY.md").read_text(encoding="utf-8")
+        runbook = repo_path("docs/RUNBOOK.md").read_text(encoding="utf-8")
+        current_state = repo_path("docs/CURRENT-STATE.md").read_text(encoding="utf-8")
+        for text in [parity, runbook, current_state]:
+            with self.subTest():
+                self.assertIn("partial", text.lower())
+                self.assertIn("tools/list", text)
+                self.assertIn("list_apps", text)
+                self.assertIn("select_text", text)
+
     def test_guard_duplicate_mcp_cleanup_keeps_newest_client_per_parent(self) -> None:
         guard = load_guard_module()
         parent = os.getpid()
