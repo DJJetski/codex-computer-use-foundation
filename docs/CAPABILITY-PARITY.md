@@ -52,6 +52,16 @@ this exact list. The same list was verified against the installed Codex
 26.519.31651 / Computer Use plugin 1.0.799 runtime. A missing tool fails
 discovery before the runtime can report full health.
 
+The guard also validates each expected argument contract:
+`get_app_state.app`, `click.app` plus `click.element_index`,
+`perform_secondary_action.app` plus `element_index` plus `action`,
+`set_value.app` plus `element_index` plus `value`,
+`select_text.app` plus `element_index`, `scroll.app` plus `element_index` plus
+`direction`, `drag.app` plus `from_x`/`from_y`/`to_x`/`to_y`,
+`press_key.app` plus `key`, and `type_text.app` plus `text`. Full parity is not
+claimed when a tool name exists but its native parameters are missing or the
+fields that the official schema marks required are no longer required.
+
 ## API Computer Use Versus Codex App Computer Use
 
 OpenAI's API Computer Use guide describes model actions such as `click`,
@@ -136,6 +146,11 @@ Codex-context `tools/list` discovery plus fresh MCP smoke evidence. The current
 expected MCP surface remains `list_apps`, `get_app_state`, `click`,
 `perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`,
 `press_key`, and `type_text`.
+
+If `tools/list` shows those names but omits expected input-schema entries,
+treat that as native discovery failure. Search/address field work must stay on
+native `set_value` or `type_text` only when the original native tool contract is
+present; an operator fallback does not repair or prove the native surface.
 
 ## Google Chrome Native Use
 

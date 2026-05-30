@@ -106,7 +106,7 @@ People usually find this project while searching for:
 | Native launcher | Uses `exec` so `SkyComputerUseClient mcp` keeps the Codex AppServer, AppleEvent, and Mach rendezvous context. |
 | Runtime state | Repairs local marketplace mirrors, plugin cache, runtime copy, LaunchServices registration, and stale native client processes. |
 | Persistence | Installs a user LaunchAgent and bootstrap backup so structural repair runs after Codex rewrites, Codex restarts, and Mac reboots. |
-| Verification | Requires the full native MCP tool surface and fresh native smoke evidence before reporting full operational health. |
+| Verification | Requires the full native MCP tool surface, expected tool argument contract, and fresh native smoke evidence before reporting full operational health. |
 | Boundaries | Keeps fallback automation separate from native Computer Use success. |
 
 ## What It Does Not Do
@@ -158,6 +158,7 @@ Full health requires:
 
 - repaired structural routing
 - full native Computer Use MCP tool surface discoverable
+- expected argument properties and schema-required fields present for every native tool
 - no duplicate native MCP client ownership conflict
 - native runtime ready
 - fresh native smoke from the Codex MCP context
@@ -202,9 +203,10 @@ must expose this complete MCP surface:
 | `type_text` | Type text through the native tool path. |
 
 The live smoke test intentionally exercises a safe subset in Calculator.
-Tool-surface parity is checked separately with `tools/list`, so a missing
-`scroll`, `drag`, `set_value`, `select_text`, or secondary action tool fails
-discovery before full health can pass.
+Tool-surface parity is checked separately with `tools/list`, including the
+expected argument contract for each tool, so a missing `scroll`, `drag`,
+`set_value`, `select_text`, secondary action tool, or broken `type_text.text`
+or `set_value.value` contract fails discovery before full health can pass.
 
 For tasks that specifically depend on the user's normal Google Chrome
 app/profile, run the separate native Chrome smoke:

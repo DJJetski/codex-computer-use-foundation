@@ -57,6 +57,30 @@ EXPECTED_NATIVE_MCP_TOOLS = (
     "press_key",
     "type_text",
 )
+EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES = {
+    "list_apps": (),
+    "get_app_state": ("app",),
+    "click": ("app", "element_index"),
+    "perform_secondary_action": ("app", "element_index", "action"),
+    "set_value": ("app", "element_index", "value"),
+    "select_text": ("app", "element_index"),
+    "scroll": ("app", "element_index", "direction"),
+    "drag": ("app", "from_x", "from_y", "to_x", "to_y"),
+    "press_key": ("app", "key"),
+    "type_text": ("app", "text"),
+}
+EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS = {
+    "list_apps": (),
+    "get_app_state": ("app",),
+    "click": ("app",),
+    "perform_secondary_action": ("app", "element_index", "action"),
+    "set_value": ("app", "element_index", "value"),
+    "select_text": ("app",),
+    "scroll": ("app", "element_index", "direction"),
+    "drag": ("app", "from_x", "from_y", "to_x", "to_y"),
+    "press_key": ("app", "key"),
+    "type_text": ("app", "text"),
+}
 ABSOLUTE_HOME_RE = re.compile(r"/" + r"Users/[A-Za-z0-9._-]+")
 
 
@@ -302,6 +326,7 @@ def guard_status_payload_checks(payload: dict[str, object], *, require_operation
         mcp_tools = set(payload.get("mcp_tools") or [])
         missing_tools = sorted(set(EXPECTED_NATIVE_MCP_TOOLS).difference(mcp_tools))
         tool_surface = payload.get("mcp_tool_surface") or {}
+        schema_contract = payload.get("mcp_tool_schema_contract") or tool_surface.get("schema_contract") or {}
         checks.extend(
             [
                 check(bool(payload.get("ok")), "guard ok=true"),
@@ -312,6 +337,22 @@ def guard_status_payload_checks(payload: dict[str, object], *, require_operation
                 check(tool_surface.get("ok") is True, "native MCP tool surface status ok=true", str(tool_surface)),
                 check(tuple(tool_surface.get("expected") or ()) == EXPECTED_NATIVE_MCP_TOOLS, "native MCP expected tool contract recorded"),
                 check((tool_surface.get("missing") or []) == [], "native MCP tool surface has no missing tools"),
+                check(schema_contract.get("ok") is True, "native MCP tool argument schema contract ok=true", str(schema_contract)),
+                check(
+                    schema_contract.get("expected_properties") == {
+                        name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+                    },
+                    "native MCP expected argument property contract recorded",
+                    str(schema_contract.get("expected_properties")),
+                ),
+                check(
+                    schema_contract.get("expected_schema_required") == {
+                        name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+                    },
+                    "native MCP expected schema-required argument contract recorded",
+                    str(schema_contract.get("expected_schema_required")),
+                ),
+                check((schema_contract.get("errors") or []) == [], "native MCP tool argument schema has no errors"),
             ]
         )
         smoke = payload.get("native_smoke") or {}

@@ -50,6 +50,10 @@ Expected:
 - `structural_ok=true`
 - all health layers true
 - native smoke fresh and fallback-free
+- `mcp_tool_schema_contract.ok=true`, with no missing expected argument
+  properties or schema-required fields for native `set_value`, `type_text`,
+  `click`, `press_key`, `scroll`, `drag`, `select_text`,
+  `perform_secondary_action`, or `get_app_state`
 
 If `structural_ok=true` but `ok=false`, inspect `operational_state`. A state of
 `structural_ok_needs_fresh_native_smoke` means the repair layer is present, but
@@ -58,6 +62,11 @@ thread before native operation is proven.
 
 If the only failure is `failure_class=stale_native_smoke`, run full `ensure`.
 That is the intended fail-closed refresh path.
+
+If the full tool list is present but `mcp_tool_schema_contract.ok=false`, treat
+the installed native surface as broken. Do not use Safari, Chrome, AppleScript,
+or coordinate automation as evidence that native Computer Use works; repair the
+native route and retry from a fresh Codex thread.
 
 ## Full Repair And Validation
 

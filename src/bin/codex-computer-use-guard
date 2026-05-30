@@ -127,6 +127,35 @@ EXPECTED_NATIVE_MCP_TOOLS: tuple[str, ...] = (
     "press_key",
     "type_text",
 )
+EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES: dict[str, tuple[str, ...]] = {
+    "list_apps": (),
+    "get_app_state": ("app",),
+    "click": ("app", "element_index"),
+    "perform_secondary_action": ("app", "element_index", "action"),
+    "set_value": ("app", "element_index", "value"),
+    "select_text": ("app", "element_index"),
+    "scroll": ("app", "element_index", "direction"),
+    "drag": ("app", "from_x", "from_y", "to_x", "to_y"),
+    "press_key": ("app", "key"),
+    "type_text": ("app", "text"),
+}
+EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS: dict[str, tuple[str, ...]] = {
+    "list_apps": (),
+    "get_app_state": ("app",),
+    # The official click schema allows element-index clicks and coordinate
+    # clicks, so element_index must exist as a property but is not always a
+    # schema-required field.
+    "click": ("app",),
+    "perform_secondary_action": ("app", "element_index", "action"),
+    "set_value": ("app", "element_index", "value"),
+    # The native schema can require text while still exposing element_index for
+    # cursor placement/selection variants.
+    "select_text": ("app",),
+    "scroll": ("app", "element_index", "direction"),
+    "drag": ("app", "from_x", "from_y", "to_x", "to_y"),
+    "press_key": ("app", "key"),
+    "type_text": ("app", "text"),
+}
 NATIVE_TARGET_SAFETY_BLOCKED_APPS: tuple[dict[str, str], ...] = (
     {
         "bundle_id": "com.apple.Terminal",
@@ -2396,9 +2425,76 @@ def _service_runtime_probe(binary: Path) -> tuple[bool, str]:
     return True, error
 
 
-def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str]:
+def _mcp_tool_schema_contract(tool_payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {str(tool.get("name") or ""): tool for tool in tool_payloads if isinstance(tool, dict)}
+    details: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for tool_name, required_properties in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items():
+        schema_required_args = EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS[tool_name]
+        tool = by_name.get(tool_name)
+        if tool is None:
+            details[tool_name] = {
+                "ok": False,
+                "required_properties": list(required_properties),
+                "schema_required_expected": list(schema_required_args),
+                "schema_required": [],
+                "properties": [],
+                "missing_schema_required": list(schema_required_args),
+                "missing_properties": list(required_properties),
+            }
+            errors.append(f"{tool_name} missing tool entry")
+            continue
+        schema = tool.get("inputSchema") or tool.get("input_schema") or {}
+        if not isinstance(schema, dict):
+            schema = {}
+        schema_required = schema.get("required") if isinstance(schema.get("required"), list) else []
+        properties_payload = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        required_set = {str(item) for item in schema_required}
+        property_set = {str(item) for item in properties_payload}
+        expected_property_set = set(required_properties)
+        expected_schema_required_set = set(schema_required_args)
+        missing_schema_required = sorted(expected_schema_required_set.difference(required_set))
+        missing_properties = sorted(expected_property_set.difference(property_set))
+        ok = not missing_schema_required and not missing_properties
+        details[tool_name] = {
+            "ok": ok,
+            "required_properties": list(required_properties),
+            "schema_required_expected": list(schema_required_args),
+            "schema_required": sorted(required_set),
+            "properties": sorted(property_set),
+            "missing_schema_required": missing_schema_required,
+            "missing_properties": missing_properties,
+        }
+        if missing_schema_required:
+            errors.append(f"{tool_name} schema required missing: {', '.join(missing_schema_required)}")
+        if missing_properties:
+            errors.append(f"{tool_name} schema properties missing: {', '.join(missing_properties)}")
+    return {
+        "ok": not errors,
+        "expected_properties": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+        },
+        "expected_schema_required": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+        },
+        "details": details,
+        "errors": errors,
+    }
+
+
+def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str, dict[str, Any]]:
     if not os.access(binary, os.X_OK):
-        return False, [], f"native MCP binary is not executable: {binary}"
+        return False, [], f"native MCP binary is not executable: {binary}", {
+            "ok": False,
+            "expected_properties": {
+                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+            },
+            "expected_schema_required": {
+                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+            },
+            "details": {},
+            "errors": [f"native MCP binary is not executable: {binary}"],
+        }
     messages = [
         {
             "jsonrpc": "2.0",
@@ -2429,6 +2525,7 @@ def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str]:
         return False, [], str(exc)
 
     tools: list[str] = []
+    tool_payloads: list[dict[str, Any]] = []
     errors: list[str] = []
     for line in result.stdout.splitlines():
         if not line.strip():
@@ -2446,27 +2543,43 @@ def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str]:
         result_payload = response.get("result") or {}
         for tool in result_payload.get("tools", []):
             if isinstance(tool, dict) and tool.get("name"):
+                tool_payloads.append(tool)
                 tools.append(str(tool["name"]))
 
     required = set(EXPECTED_NATIVE_MCP_TOOLS)
     missing = sorted(required.difference(tools))
+    schema_contract = _mcp_tool_schema_contract(tool_payloads)
     if result.returncode != 0:
         errors.append(f"native MCP probe exited with {result.returncode}")
     if missing:
         errors.append(f"missing expected tools: {', '.join(missing)}")
-    return not errors, tools, "; ".join(errors)
+    if not schema_contract["ok"]:
+        errors.extend(schema_contract["errors"])
+    return not errors, tools, "; ".join(errors), schema_contract
 
 
-def _mcp_tool_surface(tools: list[str], *, ok: bool) -> dict[str, Any]:
+def _mcp_tool_surface(tools: list[str], *, ok: bool, schema_contract: dict[str, Any] | None = None) -> dict[str, Any]:
     observed = sorted(set(tools))
     missing = sorted(set(EXPECTED_NATIVE_MCP_TOOLS).difference(observed))
     unexpected = sorted(set(observed).difference(EXPECTED_NATIVE_MCP_TOOLS))
+    schema_contract = schema_contract or {
+        "ok": False,
+        "expected_properties": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+        },
+        "expected_schema_required": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+        },
+        "details": {},
+        "errors": ["schema contract was not evaluated"],
+    }
     return {
-        "ok": bool(ok) and not missing,
+        "ok": bool(ok) and not missing and bool(schema_contract.get("ok")),
         "expected": list(EXPECTED_NATIVE_MCP_TOOLS),
         "observed": observed,
         "missing": missing,
         "unexpected": unexpected,
+        "schema_contract": schema_contract,
     }
 
 
@@ -3551,8 +3664,31 @@ def ensure() -> dict[str, Any]:
     direct_mcp_underscore_config = _direct_mcp_underscore_configured(config_text, mcp_command)
     direct_mcp_underscore_alias_config = _direct_mcp_underscore_alias_configured(config_text, mcp_command)
     runtime_ok, runtime_error = _runtime_probe(binary)
-    mcp_tools_ok, mcp_tools, mcp_tools_error = _mcp_tools_probe(mcp_command) if mcp_command.is_file() else (False, [], "")
-    mcp_tool_surface = _mcp_tool_surface(mcp_tools, ok=mcp_tools_ok)
+    mcp_tools_ok, mcp_tools, mcp_tools_error, mcp_tool_schema_contract = (
+        _mcp_tools_probe(mcp_command)
+        if mcp_command.is_file()
+        else (
+            False,
+            [],
+            "",
+            {
+                "ok": False,
+                "expected_properties": {
+                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+                },
+                "expected_schema_required": {
+                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+                },
+                "details": {},
+                "errors": ["MCP command is missing"],
+            },
+        )
+    )
+    mcp_tool_surface = _mcp_tool_surface(
+        mcp_tools,
+        ok=mcp_tools_ok,
+        schema_contract=mcp_tool_schema_contract,
+    )
     mcp_list_apps_call_ok, mcp_list_apps_count, mcp_list_apps_error = (
         _mcp_tool_call_probe(mcp_command, "list_apps", {}, timeout=15)
         if mcp_command.is_file() and os.environ.get("CODEX_CU_STANDALONE_TOOL_CALL_PROBE") == "1"
@@ -3664,7 +3800,14 @@ def ensure() -> dict[str, Any]:
         "mcp_tools": mcp_tools,
         "mcp_tools_error": mcp_tools_error,
         "mcp_tool_surface": mcp_tool_surface,
+        "mcp_tool_schema_contract": mcp_tool_schema_contract,
         "expected_mcp_tools": list(EXPECTED_NATIVE_MCP_TOOLS),
+        "expected_mcp_tool_required_properties": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+        },
+        "expected_mcp_tool_schema_required_args": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+        },
         "mcp_tools_missing": mcp_tool_surface["missing"],
         "mcp_list_apps_call_ok": mcp_list_apps_call_ok,
         "mcp_list_apps_count": mcp_list_apps_count,
@@ -3783,10 +3926,43 @@ def status() -> dict[str, Any]:
     direct_mcp_underscore_config = _direct_mcp_underscore_configured(config_text, mcp_command)
     direct_mcp_underscore_alias_config = _direct_mcp_underscore_alias_configured(config_text, mcp_command)
     runtime_ok, runtime_error = _runtime_probe(binary) if cache_valid else (False, "")
-    mcp_tools_ok, mcp_tools, mcp_tools_error = (
-        _mcp_tools_probe(mcp_command) if cache_valid and mcp_command.is_file() else (False, [], "")
+    mcp_tools_ok, mcp_tools, mcp_tools_error, mcp_tool_schema_contract = (
+        _mcp_tools_probe(mcp_command)
+        if cache_valid and mcp_command.is_file()
+        else (
+            False,
+            [],
+            "",
+            {
+                "ok": False,
+                "expected_properties": {
+                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+                },
+                "expected_schema_required": {
+                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+                },
+                "details": {},
+                "errors": ["MCP command is missing"],
+            },
+        )
     )
-    mcp_tool_surface = _mcp_tool_surface(mcp_tools, ok=mcp_tools_ok)
+    if not isinstance(mcp_tool_schema_contract, dict):
+        mcp_tool_schema_contract = {
+            "ok": False,
+            "expected_properties": {
+                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+            },
+            "expected_schema_required": {
+                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+            },
+            "details": {},
+            "errors": ["MCP command is missing"],
+        }
+    mcp_tool_surface = _mcp_tool_surface(
+        mcp_tools,
+        ok=mcp_tools_ok,
+        schema_contract=mcp_tool_schema_contract,
+    )
     mcp_list_apps_call_ok, mcp_list_apps_count, mcp_list_apps_error = (
         _mcp_tool_call_probe(mcp_command, "list_apps", {}, timeout=15)
         if cache_valid
@@ -3932,7 +4108,14 @@ def status() -> dict[str, Any]:
         "mcp_tools": mcp_tools,
         "mcp_tools_error": mcp_tools_error,
         "mcp_tool_surface": mcp_tool_surface,
+        "mcp_tool_schema_contract": mcp_tool_schema_contract,
         "expected_mcp_tools": list(EXPECTED_NATIVE_MCP_TOOLS),
+        "expected_mcp_tool_required_properties": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+        },
+        "expected_mcp_tool_schema_required_args": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+        },
         "mcp_tools_missing": mcp_tool_surface["missing"],
         "mcp_list_apps_call_ok": mcp_list_apps_call_ok,
         "mcp_list_apps_count": mcp_list_apps_count,

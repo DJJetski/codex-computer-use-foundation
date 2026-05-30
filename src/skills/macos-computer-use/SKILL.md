@@ -228,6 +228,9 @@ The guard must keep all of these true:
   complete native MCP tool surface:
   `list_apps`, `get_app_state`, `click`, `perform_secondary_action`,
   `set_value`, `select_text`, `scroll`, `drag`, `press_key`, and `type_text`
+- the `tools/list` probe also reports the expected argument contract for each
+  native tool, including `set_value.value`, `type_text.text`,
+  `click.element_index`, `press_key.key`, and the drag/scroll parameters
 - full `status` and `ensure` expose layered health:
   `configured`, `discoverable`, `runtime_ready`, `mcp_client_ownership`,
   `appserver_rendezvous`, `operational`, and `second_mouse_verified`.

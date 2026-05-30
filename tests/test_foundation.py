@@ -68,6 +68,19 @@ def load_script_module(name: str, relpath: str):
     return module
 
 
+def native_tool_payload(guard, name: str) -> dict[str, object]:
+    required = list(guard.EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS[name])
+    properties = list(guard.EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES[name])
+    return {
+        "name": name,
+        "inputSchema": {
+            "type": "object",
+            "properties": {arg: {"type": "string"} for arg in sorted(set(required + properties))},
+            "required": required,
+        },
+    }
+
+
 class FoundationTests(unittest.TestCase):
     def test_manifest_sources_exist_and_modes_are_declared(self) -> None:
         for item in INSTALL_MANIFEST:
@@ -267,7 +280,7 @@ class FoundationTests(unittest.TestCase):
                         "id": 2,
                         "result": {
                             "tools": [
-                                {"name": name}
+                                native_tool_payload(guard, name)
                                 for name in guard.EXPECTED_NATIVE_MCP_TOOLS
                             ]
                         },
@@ -284,8 +297,9 @@ class FoundationTests(unittest.TestCase):
                 binary = Path(tmp) / "codex-computer-use-native-launcher"
                 binary.write_text("#!/bin/sh\n", encoding="utf-8")
                 binary.chmod(0o700)
-                ok, _tools, error = guard._mcp_tools_probe(binary)
+                ok, _tools, error, schema_contract = guard._mcp_tools_probe(binary)
                 self.assertTrue(ok, error)
+                self.assertTrue(schema_contract["ok"])
                 ok, count, error = guard._mcp_tool_call_probe(binary, "list_apps", {}, timeout=15)
                 self.assertTrue(ok, error)
                 self.assertEqual(count, 1)
@@ -307,7 +321,7 @@ class FoundationTests(unittest.TestCase):
 
         def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
             tools = [
-                {"name": name}
+                native_tool_payload(guard, name)
                 for name in guard.EXPECTED_NATIVE_MCP_TOOLS
                 if name != "drag"
             ]
@@ -325,19 +339,56 @@ class FoundationTests(unittest.TestCase):
                 binary = Path(tmp) / "codex-computer-use-native-launcher"
                 binary.write_text("#!/bin/sh\n", encoding="utf-8")
                 binary.chmod(0o700)
-                ok, tools, error = guard._mcp_tools_probe(binary)
+                ok, tools, error, schema_contract = guard._mcp_tools_probe(binary)
         finally:
             guard.subprocess.run = old_run
 
         self.assertFalse(ok)
         self.assertNotIn("drag", tools)
+        self.assertFalse(schema_contract["ok"])
         self.assertIn("missing expected tools: drag", error)
+
+    def test_mcp_tools_probe_requires_expected_argument_schemas(self) -> None:
+        guard = load_guard_module()
+
+        def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            tools = [
+                native_tool_payload(guard, name)
+                for name in guard.EXPECTED_NATIVE_MCP_TOOLS
+            ]
+            type_text = next(tool for tool in tools if tool["name"] == "type_text")
+            schema = type_text["inputSchema"]
+            schema["required"] = ["app"]
+            schema["properties"] = {"app": {"type": "string"}}
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + "\n",
+                "",
+            )
+
+        old_run = guard.subprocess.run
+        try:
+            guard.subprocess.run = fake_run
+            with tempfile.TemporaryDirectory() as tmp:
+                binary = Path(tmp) / "codex-computer-use-native-launcher"
+                binary.write_text("#!/bin/sh\n", encoding="utf-8")
+                binary.chmod(0o700)
+                ok, tools, error, schema_contract = guard._mcp_tools_probe(binary)
+        finally:
+            guard.subprocess.run = old_run
+
+        self.assertFalse(ok)
+        self.assertEqual(set(tools), set(guard.EXPECTED_NATIVE_MCP_TOOLS))
+        self.assertFalse(schema_contract["ok"])
+        self.assertIn("type_text schema required missing: text", error)
+        self.assertIn("type_text schema properties missing: text", error)
 
     def test_mcp_tools_probe_rejects_nonzero_exit_even_with_full_tool_surface(self) -> None:
         guard = load_guard_module()
 
         def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
-            tools = [{"name": name} for name in guard.EXPECTED_NATIVE_MCP_TOOLS]
+            tools = [native_tool_payload(guard, name) for name in guard.EXPECTED_NATIVE_MCP_TOOLS]
             return subprocess.CompletedProcess(
                 cmd,
                 1,
@@ -352,12 +403,13 @@ class FoundationTests(unittest.TestCase):
                 binary = Path(tmp) / "codex-computer-use-native-launcher"
                 binary.write_text("#!/bin/sh\n", encoding="utf-8")
                 binary.chmod(0o700)
-                ok, tools, error = guard._mcp_tools_probe(binary)
+                ok, tools, error, schema_contract = guard._mcp_tools_probe(binary)
         finally:
             guard.subprocess.run = old_run
 
         self.assertFalse(ok)
         self.assertEqual(set(tools), set(guard.EXPECTED_NATIVE_MCP_TOOLS))
+        self.assertTrue(schema_contract["ok"])
         self.assertIn("native MCP probe exited with 1", error)
 
     def test_ensure_config_repairs_persistence_layer(self) -> None:
@@ -1080,6 +1132,32 @@ class FoundationTests(unittest.TestCase):
                 "observed": list(verifier.EXPECTED_NATIVE_MCP_TOOLS),
                 "missing": [],
                 "unexpected": [],
+                "schema_contract": {
+                    "ok": True,
+                    "expected_properties": {
+                        name: list(args)
+                        for name, args in verifier.EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+                    },
+                    "expected_schema_required": {
+                        name: list(args)
+                        for name, args in verifier.EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+                    },
+                    "details": {},
+                    "errors": [],
+                },
+            },
+            "mcp_tool_schema_contract": {
+                "ok": True,
+                "expected_properties": {
+                    name: list(args)
+                    for name, args in verifier.EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+                },
+                "expected_schema_required": {
+                    name: list(args)
+                    for name, args in verifier.EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+                },
+                "details": {},
+                "errors": [],
             },
             "native_smoke": {
                 "ok": True,
@@ -1130,6 +1208,14 @@ class FoundationTests(unittest.TestCase):
         failed = [item["name"] for item in checks if not item["ok"]]
         self.assertIn("native MCP full tool surface present", failed)
         self.assertIn("native MCP tool surface status ok=true", failed)
+
+        bad_schema_payload = json.loads(json.dumps(payload))
+        bad_schema_payload["mcp_tool_schema_contract"]["ok"] = False
+        bad_schema_payload["mcp_tool_schema_contract"]["errors"] = ["type_text schema required missing: text"]
+        checks = verifier.guard_status_payload_checks(bad_schema_payload, require_operational=True)
+        failed = [item["name"] for item in checks if not item["ok"]]
+        self.assertIn("native MCP tool argument schema contract ok=true", failed)
+        self.assertIn("native MCP tool argument schema has no errors", failed)
 
     def test_installer_scrubs_direct_aliases_and_foundation_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

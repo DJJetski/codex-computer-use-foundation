@@ -100,6 +100,10 @@ Expected high-level result:
   newest client and removing older duplicate transports. Duplicate parent
   groups remain fail-closed evidence until `ensure`, explicit cleanup, or a
   thread restart removes them.
+- Native MCP discovery validates both the complete tool list and each tool's
+  expected argument contract. A tool name without the expected settable
+  parameters, such as `type_text.text` or `set_value.value`, is treated as a
+  broken native surface instead of a reason to use a GUI fallback.
 - Current live validation on Codex 26.519.31651 with Computer Use plugin
   1.0.799 reports the Calculator target as not frontmost during the native
   smoke, with `target_not_frontmost_verified=true`. The value is recorded as
@@ -191,6 +195,10 @@ computer-use
   with the guard's Codex-context `tools/list` and live smoke evidence before
   changing the parity target. Thread-visible tool metadata can lag the installed
   route after updates or repair.
+- If `tools/list` exposes every tool name but one tool is missing its expected
+  argument contract, the guard must fail discovery. This protects address/search
+  field workflows where the visible tool exists but cannot reliably accept the
+  original native arguments.
 - If `mcp__computer_use__` is visible but native calls return
   `Transport closed`, treat the current thread as stale MCP transport state.
   Do not use fallbacks as proof; run full `ensure` if needed and retry from a
