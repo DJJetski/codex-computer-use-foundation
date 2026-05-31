@@ -151,6 +151,13 @@ If `tools/list` shows those names but omits expected input-schema entries,
 treat that as native discovery failure. Search/address field work must stay on
 native `set_value` or `type_text` only when the original native tool contract is
 present; an operator fallback does not repair or prove the native surface.
+During full `ensure`, local discovery failure from a missing tool or broken
+input schema causes one forced rebuild of the local Computer Use cache,
+marketplace plugin copy, runtime copy, compatibility patch, and LaunchServices
+registration from the installed Codex bundle, then a second `tools/list` probe.
+This repairs local corruption and stale materialization. It deliberately cannot
+invent MCP tools or arguments that the bundled OpenAI plugin no longer
+publishes.
 
 ## Google Chrome Native Use
 
@@ -191,6 +198,14 @@ helper scripts for the native host manifest and active-profile extension
 install. It does not install or repair the native host manifest directly,
 because the official setup flow belongs to Codex Plugins and the Chrome
 Extension permission prompts.
+
+The guard also keeps the bundled in-app Browser plugin route
+`browser@openai-bundled` enabled, removes stale disabled-tool entries for the
+legacy `browser-use@openai-bundled` id, caches the official Browser plugin
+copy, and reports this route separately as `browser_plugin` through
+`codex-computer-use-guard browser-plugin-status`. Browser plugin health is not
+native Computer Use health and must not be used as fallback evidence for
+`ok=true`.
 
 The smoke does not claim arbitrary control of minimized windows, off-Space
 windows, invisible windows, Terminal, Codex itself, administrator prompts, or

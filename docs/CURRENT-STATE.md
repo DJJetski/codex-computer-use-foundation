@@ -104,6 +104,11 @@ Expected high-level result:
   expected argument contract. A tool name without the expected settable
   parameters, such as `type_text.text` or `set_value.value`, is treated as a
   broken native surface instead of a reason to use a GUI fallback.
+- Full `ensure` responds to that broken local schema by force-refreshing the
+  local Computer Use cache, marketplace plugin copy, runtime copy, compatibility
+  patch, and LaunchServices registration from the installed Codex bundle, then
+  running `tools/list` again. If the bundled OpenAI plugin itself still lacks
+  the expected contract after that rebuild, the guard fails closed.
 - Current live validation on Codex 26.519.31651 with Computer Use plugin
   1.0.799 reports the Calculator target as not frontmost during the native
   smoke, with `target_not_frontmost_verified=true`. The value is recorded as
@@ -129,6 +134,12 @@ Expected high-level result:
   scripts for the native host manifest and active-profile extension install,
   but it does not install the Chrome extension or native host outside the
   official Codex Plugins setup flow.
+- The official in-app Browser plugin route is reported separately as
+  `browser_plugin` and can be checked with
+  `$HOME/.codex/bin/codex-computer-use-guard browser-plugin-status`. The guard
+  keeps `browser@openai-bundled` enabled and removes stale
+  `browser-use@openai-bundled` suppression entries, but Browser readiness is not
+  counted as native Computer Use smoke evidence.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 

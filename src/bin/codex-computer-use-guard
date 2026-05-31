@@ -103,10 +103,12 @@ OPENAI_TEAM_ID = "2DC432GLL2"
 BUNDLED_MARKETPLACE = OPENAI_CODEX_APP / "Contents" / "Resources" / "plugins" / "openai-bundled"
 COMPUTER_USE_SOURCE = BUNDLED_MARKETPLACE / "plugins" / "computer-use"
 CHROME_SOURCE = BUNDLED_MARKETPLACE / "plugins" / "chrome"
+BROWSER_SOURCE = BUNDLED_MARKETPLACE / "plugins" / "browser"
 PATCHED_BUNDLED_MARKETPLACE = CODEX_HOME / "plugins" / "marketplaces" / "openai-bundled"
 TMP_BUNDLED_MARKETPLACE = CODEX_HOME / ".tmp" / "bundled-marketplaces" / "openai-bundled"
 CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "computer-use"
 CHROME_CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "chrome"
+BROWSER_CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "browser"
 RUNTIME_BASE = CODEX_HOME / "computer-use"
 RUNTIME_APP = RUNTIME_BASE / "Codex Computer Use.app"
 SIGNED_MARKETPLACE_APP = PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use" / "Codex Computer Use.app"
@@ -202,6 +204,7 @@ __attribute__((swiftcall)) void swift_task_removePriorityEscalationHandler(void 
 
 PLUGIN_HEADER = '[plugins."computer-use@openai-bundled"]'
 CHROME_PLUGIN_HEADER = '[plugins."chrome@openai-bundled"]'
+BROWSER_PLUGIN_HEADER = '[plugins."browser@openai-bundled"]'
 BROWSER_HEADER = '[plugins."browser-use@openai-bundled"]'
 MARKETPLACE_HEADER = "[marketplaces.openai-bundled]"
 DIRECT_MCP_HEADER = "[mcp_servers.computer-use]"
@@ -218,7 +221,14 @@ ALL_DIRECT_MCP_HEADERS = DIRECT_MCP_HEADERS + LEGACY_DIRECT_MCP_HEADERS
 TOOL_SUGGEST_HEADER = "[tool_suggest]"
 COMPUTER_USE_PLUGIN_ID = "computer-use@openai-bundled"
 CHROME_PLUGIN_ID = "chrome@openai-bundled"
-GUARDED_PLUGIN_IDS = (COMPUTER_USE_PLUGIN_ID, CHROME_PLUGIN_ID)
+BROWSER_PLUGIN_ID = "browser@openai-bundled"
+LEGACY_BROWSER_USE_PLUGIN_ID = "browser-use@openai-bundled"
+GUARDED_PLUGIN_IDS = (
+    COMPUTER_USE_PLUGIN_ID,
+    CHROME_PLUGIN_ID,
+    BROWSER_PLUGIN_ID,
+    LEGACY_BROWSER_USE_PLUGIN_ID,
+)
 COMPUTER_USE_DISABLED_TOOL_RE = re.compile(
     r'\{\s*type\s*=\s*"plugin"\s*,\s*id\s*=\s*"computer-use@openai-bundled"\s*\}'
 )
@@ -1842,7 +1852,7 @@ def _chrome_plugin_copy_ok(plugin: Path) -> bool:
     extension_config = plugin / "scripts" / "extension-id.json"
     native_host_check = plugin / "scripts" / "check-native-host-manifest.js"
     extension_check = plugin / "scripts" / "check-extension-installed.js"
-    node = plugin / "app-server-runtime" / "node"
+    node = _chrome_plugin_node(plugin)
     try:
         with manifest.open("r", encoding="utf-8-sig") as fh:
             payload = json.load(fh)
@@ -1850,7 +1860,10 @@ def _chrome_plugin_copy_ok(plugin: Path) -> bool:
         return False
     return (
         payload.get("name") == "chrome"
-        and (plugin / "skills" / "chrome" / "SKILL.md").is_file()
+        and (
+            (plugin / "skills" / "chrome" / "SKILL.md").is_file()
+            or (plugin / "skills" / "control-chrome" / "SKILL.md").is_file()
+        )
         and extension_config.is_file()
         and native_host_check.is_file()
         and extension_check.is_file()
@@ -1875,6 +1888,27 @@ def _chrome_cache_valid(cache_root: Path, expected_version: str) -> bool:
     )
 
 
+def _generic_plugin_cache_valid(cache_root: Path, expected_name: str, expected_version: str) -> bool:
+    try:
+        with (cache_root / ".codex-plugin" / "plugin.json").open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    return (
+        payload.get("name") == expected_name
+        and str(payload.get("version") or "") == expected_version
+    )
+
+
+def _generic_plugin_copy_ok(plugin_root: Path, expected_name: str) -> bool:
+    try:
+        with (plugin_root / ".codex-plugin" / "plugin.json").open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return False
+    return payload.get("name") == expected_name
+
+
 def ensure_chrome_cache() -> tuple[str, Path, bool]:
     manifest = _load_named_plugin_manifest(CHROME_SOURCE, "chrome")
     version = str(manifest["version"])
@@ -1882,6 +1916,19 @@ def ensure_chrome_cache() -> tuple[str, Path, bool]:
     changed = False
     if not _chrome_cache_valid(dest, version):
         _copy_cache(CHROME_SOURCE, dest)
+        changed = True
+    return version, dest, changed
+
+
+def ensure_browser_cache() -> tuple[str, Path, bool]:
+    if not BROWSER_SOURCE.is_dir():
+        return "", BROWSER_CACHE_BASE, False
+    manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser")
+    version = str(manifest["version"])
+    dest = BROWSER_CACHE_BASE / version
+    changed = False
+    if not _generic_plugin_cache_valid(dest, "browser", version):
+        _copy_cache(BROWSER_SOURCE, dest)
         changed = True
     return version, dest, changed
 
@@ -1898,8 +1945,15 @@ def _installed_chrome_plugin_root() -> tuple[str, Path, bool]:
     return version, _chrome_plugin_root(), False
 
 
+def _chrome_plugin_node(plugin: Path) -> Path:
+    plugin_node = plugin / "app-server-runtime" / "node"
+    if plugin_node.is_file():
+        return plugin_node
+    return OPENAI_CODEX_APP / "Contents" / "Resources" / "node"
+
+
 def _run_chrome_plugin_check(script_name: str, *, plugin: Path, timeout: int = 10) -> dict[str, Any]:
-    node = plugin / "app-server-runtime" / "node"
+    node = _chrome_plugin_node(plugin)
     script = plugin / "scripts" / script_name
     if not _chrome_plugin_copy_ok(plugin):
         return {
@@ -1979,6 +2033,45 @@ def chrome_plugin_status() -> dict[str, Any]:
     }
 
 
+def browser_plugin_status() -> dict[str, Any]:
+    config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
+    enabled = bool(re.search(r'\[plugins\."browser@openai-bundled"\]\s+enabled\s*=\s*true', config_text))
+    disabled = _plugin_disabled(config_text, BROWSER_PLUGIN_ID)
+    legacy_disabled = _plugin_disabled(config_text, LEGACY_BROWSER_USE_PLUGIN_ID)
+    if not BROWSER_SOURCE.is_dir():
+        return {
+            "ok": False,
+            "failure_class": "browser_plugin_source_missing",
+            "enabled": enabled,
+            "disabled": disabled,
+            "legacy_disabled": legacy_disabled,
+            "source": str(BROWSER_SOURCE),
+        }
+    manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser")
+    version = str(manifest["version"])
+    cache_root = BROWSER_CACHE_BASE / version
+    cache_valid = _generic_plugin_cache_valid(cache_root, "browser", version)
+    ok = enabled and not disabled and not legacy_disabled and cache_valid
+    failure_class = ""
+    if not enabled:
+        failure_class = "browser_plugin_not_enabled"
+    elif disabled or legacy_disabled:
+        failure_class = "browser_plugin_disabled"
+    elif not cache_valid:
+        failure_class = "browser_plugin_cache_invalid"
+    return {
+        "ok": ok,
+        "failure_class": failure_class,
+        "enabled": enabled,
+        "disabled": disabled,
+        "legacy_disabled": legacy_disabled,
+        "version": version,
+        "cache_root": str(cache_root),
+        "cache_valid": cache_valid,
+        "source": str(BROWSER_SOURCE),
+    }
+
+
 def _computer_use_manifest_without_skills(source_manifest: Path) -> str | None:
     try:
         with source_manifest.open("r", encoding="utf-8-sig") as fh:
@@ -2026,6 +2119,10 @@ def _mirror_bundled_marketplace(source: Path, dest: Path, *, patch_computer_use:
                     and source_plugin_manifest.read_bytes() != dest_plugin_manifest.read_bytes()
                 )
             )
+            if plugin_name == "chrome" and not _chrome_plugin_copy_ok(dest_plugin):
+                manifest_needs_copy = True
+            if plugin_name == "browser" and not _generic_plugin_copy_ok(dest_plugin, "browser"):
+                manifest_needs_copy = True
         if manifest_needs_copy:
             tmp = dest_plugin.with_name(dest_plugin.name + f".tmp-{os.getpid()}")
             if tmp.exists():
@@ -2482,19 +2579,24 @@ def _mcp_tool_schema_contract(tool_payloads: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def _empty_mcp_tool_schema_contract(error: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "expected_properties": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
+        },
+        "expected_schema_required": {
+            name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
+        },
+        "details": {},
+        "errors": [error],
+    }
+
+
 def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str, dict[str, Any]]:
     if not os.access(binary, os.X_OK):
-        return False, [], f"native MCP binary is not executable: {binary}", {
-            "ok": False,
-            "expected_properties": {
-                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
-            },
-            "expected_schema_required": {
-                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
-            },
-            "details": {},
-            "errors": [f"native MCP binary is not executable: {binary}"],
-        }
+        error = f"native MCP binary is not executable: {binary}"
+        return False, [], error, _empty_mcp_tool_schema_contract(error)
     messages = [
         {
             "jsonrpc": "2.0",
@@ -2522,7 +2624,8 @@ def _mcp_tools_probe(binary: Path) -> tuple[bool, list[str], str, dict[str, Any]
             env=_launcher_probe_env(),
         )
     except Exception as exc:  # noqa: BLE001
-        return False, [], str(exc)
+        error = str(exc)
+        return False, [], error, _empty_mcp_tool_schema_contract(error)
 
     tools: list[str] = []
     tool_payloads: list[dict[str, Any]] = []
@@ -2581,6 +2684,48 @@ def _mcp_tool_surface(tools: list[str], *, ok: bool, schema_contract: dict[str, 
         "unexpected": unexpected,
         "schema_contract": schema_contract,
     }
+
+
+def _mcp_surface_needs_rematerialization(
+    *, tools_ok: bool, tools: list[str], schema_contract: dict[str, Any]
+) -> bool:
+    if tools_ok:
+        return False
+    missing = set(EXPECTED_NATIVE_MCP_TOOLS).difference(tools)
+    schema_errors = schema_contract.get("errors") if isinstance(schema_contract, dict) else []
+    return bool(missing or schema_errors)
+
+
+def _force_refresh_native_mcp_surface(cache_root: Path, version: str) -> dict[str, Any]:
+    """Rebuild local native Computer Use materialization from the Codex bundle.
+
+    This repairs local cache/runtime/marketplace corruption. It cannot change an
+    upstream OpenAI plugin schema; if the bundled source itself is incomplete,
+    the follow-up `tools/list` probe still fails closed.
+    """
+    changed: dict[str, Any] = {
+        "attempted": True,
+        "source": str(COMPUTER_USE_SOURCE),
+        "cache_root": str(cache_root),
+        "version": version,
+    }
+    patched_plugin = PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+    tmp_plugin = TMP_BUNDLED_MARKETPLACE / "plugins" / "computer-use"
+    for path in (patched_plugin, tmp_plugin):
+        if path.exists():
+            _remove_path(path)
+    _copy_cache(COMPUTER_USE_SOURCE, cache_root)
+    changed["cache_forced"] = True
+    changed["patched_marketplace_changed"] = ensure_patched_bundled_marketplace()
+    changed["tmp_marketplace_changed"] = ensure_tmp_bundled_marketplace()
+    changed["mcp_changed"] = ensure_mcp_native_config(cache_root)
+    changed["plugin_skill_changed"] = ensure_plugin_skill_suppressed(cache_root)
+    changed["runtime_install_changed"] = ensure_runtime_install(cache_root, version)
+    runtime_patch_changed, runtime_patch = ensure_runtime_compat(cache_root)
+    changed["runtime_patch_changed"] = runtime_patch_changed
+    changed["runtime_patch"] = runtime_patch
+    changed["launch_services_registered"] = _register_launch_services(cache_root)
+    return changed
 
 
 def _mcp_tool_call_probe(binary: Path, tool_name: str, arguments: dict[str, Any], *, timeout: int = 15) -> tuple[bool, int | None, str]:
@@ -3447,6 +3592,33 @@ def _ensure_chrome_plugin_section(lines: list[str]) -> None:
     _set_key_in_section(lines, CHROME_PLUGIN_HEADER, "enabled", "true")
 
 
+def _ensure_browser_plugin_section(lines: list[str]) -> None:
+    if not BROWSER_SOURCE.is_dir():
+        return
+    section = _find_section(lines, BROWSER_PLUGIN_HEADER)
+    if section is None:
+        chrome = _find_section(lines, CHROME_PLUGIN_HEADER)
+        legacy_browser = _find_section(lines, BROWSER_HEADER)
+        computer_use = _find_section(lines, PLUGIN_HEADER)
+        insert_at = None
+        if chrome is not None:
+            insert_at = chrome[1]
+        elif legacy_browser is not None:
+            insert_at = legacy_browser[1]
+        elif computer_use is not None:
+            insert_at = computer_use[1]
+        else:
+            for idx, line in enumerate(lines):
+                if line.startswith("[projects.") or line.startswith("[mcp_servers."):
+                    insert_at = idx
+                    break
+        if insert_at is None:
+            insert_at = len(lines)
+        lines[insert_at:insert_at] = ["", BROWSER_PLUGIN_HEADER, "enabled = true"]
+        return
+    _set_key_in_section(lines, BROWSER_PLUGIN_HEADER, "enabled", "true")
+
+
 def _ensure_marketplace(lines: list[str]) -> None:
     if _find_section(lines, MARKETPLACE_HEADER) is None:
         lines.extend(
@@ -3613,6 +3785,7 @@ def ensure_config(cache_root: Path) -> bool:
     _ensure_notify(lines, COMPUTER_USE_NOTIFY)
     _ensure_plugin_section(lines)
     _ensure_chrome_plugin_section(lines)
+    _ensure_browser_plugin_section(lines)
     _ensure_direct_mcp_server(lines, mcp_command)
     _ensure_marketplace(lines)
     _ensure_tool_suggest_allows_computer_use(lines)
@@ -3637,6 +3810,7 @@ def ensure() -> dict[str, Any]:
         tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
         version, cache_root, cache_changed = ensure_cache()
         chrome_version, chrome_cache_root, chrome_cache_changed = ensure_chrome_cache()
+        browser_version, browser_cache_root, browser_cache_changed = ensure_browser_cache()
         runtime_install_changed = ensure_runtime_install(cache_root, version)
         broker_backup_changed = ensure_broker_backup()
         native_launcher_changed = ensure_native_launcher()
@@ -3671,19 +3845,30 @@ def ensure() -> dict[str, Any]:
             False,
             [],
             "",
-            {
-                "ok": False,
-                "expected_properties": {
-                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
-                },
-                "expected_schema_required": {
-                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
-                },
-                "details": {},
-                "errors": ["MCP command is missing"],
-            },
+            _empty_mcp_tool_schema_contract("MCP command is missing"),
         )
     )
+    mcp_schema_repair: dict[str, Any] = {"attempted": False}
+    if mcp_command.is_file() and _mcp_surface_needs_rematerialization(
+        tools_ok=mcp_tools_ok,
+        tools=mcp_tools,
+        schema_contract=mcp_tool_schema_contract,
+    ):
+        first_mcp_tools_error = mcp_tools_error
+        with LOCK.open("w", encoding="utf-8") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+            mcp_schema_repair = _force_refresh_native_mcp_surface(cache_root, version)
+        binary = _preferred_native_binary_path(cache_root)
+        service_binary = _preferred_service_binary_path(cache_root)
+        runtime_ok, runtime_error = _runtime_probe(binary)
+        mcp_tools_ok, mcp_tools, mcp_tools_error, mcp_tool_schema_contract = _mcp_tools_probe(mcp_command)
+        mcp_schema_repair.update(
+            {
+                "first_error": first_mcp_tools_error,
+                "post_repair_ok": mcp_tools_ok,
+                "post_repair_error": mcp_tools_error,
+            }
+        )
     mcp_tool_surface = _mcp_tool_surface(
         mcp_tools,
         ok=mcp_tools_ok,
@@ -3715,6 +3900,7 @@ def ensure() -> dict[str, Any]:
     direct_mcp_absence = _direct_mcp_absence_status(config_text)
     ownership = mcp_client_ownership_status()
     chrome_plugin = chrome_plugin_status()
+    browser_plugin = browser_plugin_status()
     configured = (
         launch_agent_loaded
         and not computer_use_disabled
@@ -3778,6 +3964,7 @@ def ensure() -> dict[str, Any]:
         "native_smoke": native_smoke,
         "chrome_smoke": chrome_smoke,
         "chrome_plugin": chrome_plugin,
+        "browser_plugin": browser_plugin,
         "native_smoke_refreshed": native_smoke_refreshed,
         "native_smoke_refresh_error": native_smoke_refresh_error,
         "mcp_client_ownership": ownership,
@@ -3790,6 +3977,9 @@ def ensure() -> dict[str, Any]:
         "chrome_version": chrome_version,
         "chrome_cache_root": str(chrome_cache_root),
         "chrome_cache_changed": chrome_cache_changed,
+        "browser_version": browser_version,
+        "browser_cache_root": str(browser_cache_root),
+        "browser_cache_changed": browser_cache_changed,
         "cache_root": str(cache_root),
         "binary": str(binary),
         "mcp_command": str(mcp_command),
@@ -3799,6 +3989,7 @@ def ensure() -> dict[str, Any]:
         "mcp_tools_ok": mcp_tools_ok,
         "mcp_tools": mcp_tools,
         "mcp_tools_error": mcp_tools_error,
+        "mcp_schema_repair": mcp_schema_repair,
         "mcp_tool_surface": mcp_tool_surface,
         "mcp_tool_schema_contract": mcp_tool_schema_contract,
         "expected_mcp_tools": list(EXPECTED_NATIVE_MCP_TOOLS),
@@ -3817,6 +4008,8 @@ def ensure() -> dict[str, Any]:
         "service_ready": service_ready,
         "service_appdata_privacy": appdata_privacy,
         "cache_changed": cache_changed,
+        "chrome_cache_changed": chrome_cache_changed,
+        "browser_cache_changed": browser_cache_changed,
         "runtime_install_changed": runtime_install_changed,
         "broker_backup_changed": broker_backup_changed,
         "broker_backup_exists": BROKER_BACKUP.is_file(),
@@ -3872,6 +4065,9 @@ def ensure() -> dict[str, Any]:
     }
     if (
         cache_changed
+        or chrome_cache_changed
+        or browser_cache_changed
+        or mcp_schema_repair.get("attempted")
         or patched_marketplace_changed
         or tmp_marketplace_changed
         or config_changed
@@ -3902,6 +4098,12 @@ def status() -> dict[str, Any]:
     chrome_version = str(chrome_manifest.get("version") or "")
     chrome_cache_root = CHROME_CACHE_BASE / chrome_version if chrome_version else CHROME_CACHE_BASE
     chrome_cache_valid = bool(chrome_version and _chrome_cache_valid(chrome_cache_root, chrome_version))
+    browser_manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser") if BROWSER_SOURCE.is_dir() else {"version": ""}
+    browser_version = str(browser_manifest.get("version") or "")
+    browser_cache_root = BROWSER_CACHE_BASE / browser_version if browser_version else BROWSER_CACHE_BASE
+    browser_cache_valid = bool(
+        browser_version and _generic_plugin_cache_valid(browser_cache_root, "browser", browser_version)
+    )
     cache_root = CACHE_BASE / version
     config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
     runtime_install_valid = _runtime_install_valid(cache_root, version)
@@ -3933,31 +4135,11 @@ def status() -> dict[str, Any]:
             False,
             [],
             "",
-            {
-                "ok": False,
-                "expected_properties": {
-                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
-                },
-                "expected_schema_required": {
-                    name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
-                },
-                "details": {},
-                "errors": ["MCP command is missing"],
-            },
+            _empty_mcp_tool_schema_contract("MCP command is missing"),
         )
     )
     if not isinstance(mcp_tool_schema_contract, dict):
-        mcp_tool_schema_contract = {
-            "ok": False,
-            "expected_properties": {
-                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_REQUIRED_PROPERTIES.items()
-            },
-            "expected_schema_required": {
-                name: list(args) for name, args in EXPECTED_NATIVE_MCP_TOOL_SCHEMA_REQUIRED_ARGS.items()
-            },
-            "details": {},
-            "errors": ["MCP command is missing"],
-        }
+        mcp_tool_schema_contract = _empty_mcp_tool_schema_contract("MCP command is missing")
     mcp_tool_surface = _mcp_tool_surface(
         mcp_tools,
         ok=mcp_tools_ok,
@@ -4013,6 +4195,7 @@ def status() -> dict[str, Any]:
     native_smoke = _native_smoke_status()
     chrome_smoke = _chrome_smoke_status()
     chrome_plugin = chrome_plugin_status()
+    browser_plugin = browser_plugin_status()
     ownership = mcp_client_ownership_status()
     configured = (
         cache_valid
@@ -4064,6 +4247,7 @@ def status() -> dict[str, Any]:
         "native_smoke": native_smoke,
         "chrome_smoke": chrome_smoke,
         "chrome_plugin": chrome_plugin,
+        "browser_plugin": browser_plugin,
         "mcp_client_ownership": ownership,
         "native_target_safety_boundaries": _native_target_safety_boundaries(),
         "openai_codex_app": str(OPENAI_CODEX_APP),
@@ -4074,6 +4258,9 @@ def status() -> dict[str, Any]:
         "chrome_version": chrome_version,
         "chrome_cache_root": str(chrome_cache_root),
         "chrome_cache_valid": chrome_cache_valid,
+        "browser_version": browser_version,
+        "browser_cache_root": str(browser_cache_root),
+        "browser_cache_valid": browser_cache_valid,
         "cache_valid": cache_valid,
         "runtime_install_valid": runtime_install_valid,
         "runtime_app": str(RUNTIME_APP),
@@ -4165,6 +4352,8 @@ def main(argv: list[str]) -> int:
             payload = _run_chrome_smoke()
         elif command in {"chrome-plugin-status", "chrome-extension-status"}:
             payload = chrome_plugin_status()
+        elif command in {"browser-plugin-status", "browser-status"}:
+            payload = browser_plugin_status()
         elif command == "clear-native-smoke":
             try:
                 NATIVE_SMOKE_STATUS.unlink()
@@ -4212,6 +4401,7 @@ def main(argv: list[str]) -> int:
             tmp_marketplace_changed = ensure_tmp_bundled_marketplace()
             version, cache_root, cache_changed = ensure_cache()
             chrome_version, chrome_cache_root, chrome_cache_changed = ensure_chrome_cache()
+            browser_version, browser_cache_root, browser_cache_changed = ensure_browser_cache()
             runtime_install_changed = ensure_runtime_install(cache_root, version)
             broker_backup_changed = ensure_broker_backup()
             native_launcher_changed = ensure_native_launcher()
@@ -4247,6 +4437,7 @@ def main(argv: list[str]) -> int:
             native_smoke = _native_smoke_status()
             chrome_smoke = _chrome_smoke_status()
             chrome_plugin = chrome_plugin_status()
+            browser_plugin = browser_plugin_status()
             ownership = mcp_client_ownership_status()
             runtime_ready = (
                 structural_ok
@@ -4275,6 +4466,7 @@ def main(argv: list[str]) -> int:
                 "native_smoke": native_smoke,
                 "chrome_smoke": chrome_smoke,
                 "chrome_plugin": chrome_plugin,
+                "browser_plugin": browser_plugin,
                 "mcp_client_ownership": ownership,
                 "native_target_safety_boundaries": _native_target_safety_boundaries(),
                 "command": command,
@@ -4282,6 +4474,9 @@ def main(argv: list[str]) -> int:
                 "chrome_version": chrome_version,
                 "chrome_cache_root": str(chrome_cache_root),
                 "chrome_cache_changed": chrome_cache_changed,
+                "browser_version": browser_version,
+                "browser_cache_root": str(browser_cache_root),
+                "browser_cache_changed": browser_cache_changed,
                 "codex_app_path_state": str(CODEX_APP_PATH_STATE),
                 "codex_app_path_state_changed": codex_app_path_state_changed,
                 "cache_root": str(cache_root),

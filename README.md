@@ -105,8 +105,10 @@ People usually find this project while searching for:
 | MCP routing | Routes the Computer Use plugin to the native launcher and removes duplicate direct MCP aliases. |
 | Native launcher | Uses `exec` so `SkyComputerUseClient mcp` keeps the Codex AppServer, AppleEvent, and Mach rendezvous context. |
 | Runtime state | Repairs local marketplace mirrors, plugin cache, runtime copy, LaunchServices registration, and stale native client processes. |
+| Schema repair | Rebuilds local Computer Use plugin/runtime materialization from the installed Codex bundle when `tools/list` exposes a broken or partial native schema, then probes again before failing closed. |
 | Persistence | Installs a user LaunchAgent and bootstrap backup so structural repair runs after Codex rewrites, Codex restarts, and Mac reboots. |
 | Verification | Requires the full native MCP tool surface, expected tool argument contract, and fresh native smoke evidence before reporting full operational health. |
+| Browser routes | Keeps the official bundled Chrome and Browser plugin routes enabled and unsuppressed, while reporting them separately from native Computer Use health. |
 | Boundaries | Keeps fallback automation separate from native Computer Use success. |
 
 ## What It Does Not Do
@@ -207,6 +209,11 @@ Tool-surface parity is checked separately with `tools/list`, including the
 expected argument contract for each tool, so a missing `scroll`, `drag`,
 `set_value`, `select_text`, secondary action tool, or broken `type_text.text`
 or `set_value.value` contract fails discovery before full health can pass.
+During full `ensure`, that broken local schema triggers one forced rebuild of
+the local plugin cache, marketplace copy, and runtime copy from the installed
+Codex bundle, followed by a second `tools/list` probe. If the bundled OpenAI
+plugin itself no longer publishes the expected contract, the guard still fails
+closed.
 
 For tasks that specifically depend on the user's normal Google Chrome
 app/profile, run the separate native Chrome smoke:
@@ -231,6 +238,16 @@ manifest is present, and the active Chrome profile has the Codex Chrome
 Extension installed and enabled. It does not install the extension or native
 host; if those checks fail, re-add the Chrome plugin from Codex Plugins and
 follow the official setup flow.
+
+The bundled in-app Browser plugin route is also kept enabled:
+
+```bash
+$HOME/.codex/bin/codex-computer-use-guard browser-plugin-status
+```
+
+Browser and Chrome plugin readiness is reported separately; neither route is
+counted as native Computer Use success or as a fallback replacement for the
+native MCP smoke.
 
 ## Fresh Thread Check
 

@@ -384,6 +384,56 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("type_text schema required missing: text", error)
         self.assertIn("type_text schema properties missing: text", error)
 
+    def test_mcp_surface_rematerialization_triggers_on_missing_tool_or_schema(self) -> None:
+        guard = load_guard_module()
+        good_schema = {"ok": True, "errors": []}
+        bad_schema = {"ok": False, "errors": ["type_text schema required missing: text"]}
+
+        self.assertFalse(
+            guard._mcp_surface_needs_rematerialization(
+                tools_ok=True,
+                tools=list(guard.EXPECTED_NATIVE_MCP_TOOLS),
+                schema_contract=good_schema,
+            )
+        )
+        self.assertTrue(
+            guard._mcp_surface_needs_rematerialization(
+                tools_ok=False,
+                tools=[name for name in guard.EXPECTED_NATIVE_MCP_TOOLS if name != "drag"],
+                schema_contract=good_schema,
+            )
+        )
+        self.assertTrue(
+            guard._mcp_surface_needs_rematerialization(
+                tools_ok=False,
+                tools=list(guard.EXPECTED_NATIVE_MCP_TOOLS),
+                schema_contract=bad_schema,
+            )
+        )
+
+    def test_mcp_tools_probe_exception_keeps_schema_contract_shape(self) -> None:
+        guard = load_guard_module()
+
+        def fake_run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            raise TimeoutError("probe timed out")
+
+        old_run = guard.subprocess.run
+        try:
+            guard.subprocess.run = fake_run
+            with tempfile.TemporaryDirectory() as tmp:
+                binary = Path(tmp) / "codex-computer-use-native-launcher"
+                binary.write_text("#!/bin/sh\n", encoding="utf-8")
+                binary.chmod(0o700)
+                ok, tools, error, schema_contract = guard._mcp_tools_probe(binary)
+        finally:
+            guard.subprocess.run = old_run
+
+        self.assertFalse(ok)
+        self.assertEqual(tools, [])
+        self.assertIn("probe timed out", error)
+        self.assertFalse(schema_contract["ok"])
+        self.assertIn("probe timed out", schema_contract["errors"])
+
     def test_mcp_tools_probe_rejects_nonzero_exit_even_with_full_tool_surface(self) -> None:
         guard = load_guard_module()
 
@@ -866,6 +916,8 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("chrome-is-running.js", status_body)
         self.assertIn("Remove and re-add the Chrome plugin from Codex Plugins", status_body)
         self.assertNotIn("installManifest.mjs", status_body)
+        self.assertIn('plugin_name == "chrome" and not _chrome_plugin_copy_ok(dest_plugin)', guard_source)
+        self.assertIn('plugin_name == "browser" and not _generic_plugin_copy_ok(dest_plugin, "browser")', guard_source)
 
     def test_native_smoke_detects_coordinate_click_attempts(self) -> None:
         guard = load_guard_module()
@@ -2188,19 +2240,24 @@ class FoundationTests(unittest.TestCase):
             "enabled = true",
             "",
             "[tool_suggest]",
-            'disabled_tools = ["chrome@openai-bundled", { type = "plugin", id = "chrome@openai-bundled" }, "other-tool"]',
+            'disabled_tools = ["browser@openai-bundled", "chrome@openai-bundled", { type = "plugin", id = "chrome@openai-bundled" }, "other-tool"]',
         ]
 
         guard._ensure_chrome_plugin_section(lines)
+        guard._ensure_browser_plugin_section(lines)
         guard._ensure_tool_suggest_allows_computer_use(lines)
         scrubbed = guard._scrub_computer_use_disabled_tool("\n".join(lines).rstrip() + "\n")
 
         self.assertIn('[plugins."chrome@openai-bundled"]', scrubbed)
+        if guard.BROWSER_SOURCE.is_dir():
+            self.assertIn('[plugins."browser@openai-bundled"]', scrubbed)
         self.assertIn("enabled = true", scrubbed)
         self.assertIn('"other-tool"', scrubbed)
         disabled_arrays = re.findall(r"disabled_tools\s*=\s*\[(.*?)\]", scrubbed, re.DOTALL)
         self.assertFalse(any("chrome@openai-bundled" in item for item in disabled_arrays))
+        self.assertFalse(any("browser@openai-bundled" in item for item in disabled_arrays))
         self.assertFalse(guard._plugin_disabled(scrubbed, "chrome@openai-bundled"))
+        self.assertFalse(guard._plugin_disabled(scrubbed, "browser@openai-bundled"))
 
     def test_installer_refuses_manifest_target_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
