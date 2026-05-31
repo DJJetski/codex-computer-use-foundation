@@ -1942,7 +1942,7 @@ def _browser_plugin_copy_status(plugin_root: Path) -> dict[str, Any]:
     missing: list[str] = []
     try:
         # lgtm[py/path-injection] Browser plugin roots are verified app-bundled or local cache roots.
-        with manifest_path.open("r", encoding="utf-8-sig") as fh:  # lgtm[py/path-injection]
+        with manifest_path.open("r", encoding="utf-8-sig") as fh:  # lgtm[py/path-injection] # codeql[py/path-injection]
             payload = json.load(fh)
     except Exception as exc:
         return {
@@ -1957,7 +1957,7 @@ def _browser_plugin_copy_status(plugin_root: Path) -> dict[str, Any]:
     if not name_ok:
         missing.append("browser plugin manifest name")
     # lgtm[py/path-injection] Browser plugin roots are verified before this read-only completeness check.
-    if not browser_client.is_file():  # lgtm[py/path-injection]
+    if not browser_client.is_file():  # lgtm[py/path-injection] # codeql[py/path-injection]
         missing.append("scripts/browser-client.mjs")
     present_skill = next((candidate for candidate in skill_candidates if candidate.is_file()), None)
     if present_skill is None:
