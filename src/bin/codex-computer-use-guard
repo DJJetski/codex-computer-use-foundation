@@ -14,6 +14,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -109,6 +110,10 @@ TMP_BUNDLED_MARKETPLACE = CODEX_HOME / ".tmp" / "bundled-marketplaces" / "openai
 CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "computer-use"
 CHROME_CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "chrome"
 BROWSER_CACHE_BASE = CODEX_HOME / "plugins" / "cache" / "openai-bundled" / "browser"
+CHROME_NATIVE_HOST_MANIFEST_DIR = HOME / "Library" / "Application Support" / "Google" / "Chrome" / "NativeMessagingHosts"
+CHROME_EXTERNAL_EXTENSIONS_DIR = HOME / "Library" / "Application Support" / "Google" / "Chrome" / "External Extensions"
+CHROME_POLICY_PLIST = HOME / "Library" / "Preferences" / "com.google.Chrome.plist"
+CHROME_WEB_STORE_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
 RUNTIME_BASE = CODEX_HOME / "computer-use"
 RUNTIME_APP = RUNTIME_BASE / "Codex Computer Use.app"
 SIGNED_MARKETPLACE_APP = PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use" / "Codex Computer Use.app"
@@ -1981,6 +1986,269 @@ def _run_chrome_plugin_check(script_name: str, *, plugin: Path, timeout: int = 1
     return payload
 
 
+def _chrome_extension_config(plugin: Path) -> dict[str, str]:
+    config_path = plugin / "scripts" / "extension-id.json"
+    try:
+        with config_path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception as exc:
+        raise RuntimeError(f"could not read Chrome extension config: {config_path}: {exc}") from exc
+    extension_id = str(payload.get("extensionId") or "").strip()
+    host_name = str(payload.get("extensionHostName") or "com.openai.codexextension").strip()
+    if not re.fullmatch(r"[a-p]{32}", extension_id):
+        raise RuntimeError(f"invalid Chrome extension id in {config_path}: {extension_id!r}")
+    if not host_name:
+        raise RuntimeError(f"missing Chrome native host name in {config_path}")
+    return {"extension_id": extension_id, "host_name": host_name}
+
+
+def _chrome_extension_host_binary(plugin: Path) -> Path:
+    arch = platform.machine()
+    if arch == "arm64":
+        host_arch = "arm64"
+    elif arch in {"x86_64", "amd64"}:
+        host_arch = "x64"
+    else:
+        host_arch = arch
+    return plugin / "extension-host" / "macos" / host_arch / "extension-host"
+
+
+def _chrome_force_install_item(extension_id: str) -> str:
+    return f"{extension_id};{CHROME_WEB_STORE_UPDATE_URL}"
+
+
+def _read_chrome_extension_forcelist() -> list[str]:
+    try:
+        with CHROME_POLICY_PLIST.open("rb") as fh:
+            payload = plistlib.load(fh)
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
+    value = payload.get("ExtensionInstallForcelist") if isinstance(payload, dict) else None
+    if isinstance(value, list):
+        return [str(item) for item in value if isinstance(item, str)]
+    return []
+
+
+def _write_chrome_extension_forcelist(items: list[str]) -> dict[str, Any]:
+    cmd = ["/usr/bin/defaults", "write", "com.google.Chrome", "ExtensionInstallForcelist", "-array", *items]
+    result = _run_capture(cmd, timeout=10)
+    return {
+        "ok": result.returncode == 0,
+        "exit_code": result.returncode,
+        "command": "/usr/bin/defaults write com.google.Chrome ExtensionInstallForcelist -array <items>",
+        "error": "" if result.returncode == 0 else "\n".join(result.stdout.rstrip().splitlines()[-6:]),
+    }
+
+
+def _chrome_external_extension_path(extension_id: str) -> Path:
+    return CHROME_EXTERNAL_EXTENSIONS_DIR / f"{extension_id}.json"
+
+
+def _chrome_external_extension_status(plugin: Path) -> dict[str, Any]:
+    try:
+        extension_id = _chrome_extension_config(plugin)["extension_id"]
+        external_path = _chrome_external_extension_path(extension_id)
+        try:
+            with external_path.open("r", encoding="utf-8-sig") as fh:
+                payload = json.load(fh)
+        except FileNotFoundError:
+            payload = None
+        except Exception as exc:
+            return {
+                "ok": False,
+                "external_path": str(external_path),
+                "extension_id": extension_id,
+                "error": f"could not read external extension file: {exc}",
+            }
+        update_url = payload.get("external_update_url") if isinstance(payload, dict) else None
+        ok = update_url == CHROME_WEB_STORE_UPDATE_URL
+        return {
+            "ok": ok,
+            "external_path": str(external_path),
+            "extension_id": extension_id,
+            "exists": payload is not None,
+            "external_update_url": update_url or "",
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "external_dir": str(CHROME_EXTERNAL_EXTENSIONS_DIR)}
+
+
+def _write_chrome_external_extension_file(extension_id: str) -> dict[str, Any]:
+    external_path = _chrome_external_extension_path(extension_id)
+    CHROME_EXTERNAL_EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"external_update_url": CHROME_WEB_STORE_UPDATE_URL}
+    tmp = external_path.with_name(external_path.name + f".tmp-{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, external_path)
+    return {
+        "ok": True,
+        "external_path": str(external_path),
+        "extension_id": extension_id,
+        "external_update_url": CHROME_WEB_STORE_UPDATE_URL,
+    }
+
+
+def _chrome_force_install_policy_status(plugin: Path) -> dict[str, Any]:
+    try:
+        extension_config = _chrome_extension_config(plugin)
+        extension_id = extension_config["extension_id"]
+        wanted_item = _chrome_force_install_item(extension_id)
+        forcelist = _read_chrome_extension_forcelist()
+        installed = any(item == wanted_item or item.startswith(f"{extension_id};") for item in forcelist)
+        return {
+            "ok": installed,
+            "policy_file": str(CHROME_POLICY_PLIST),
+            "extension_id": extension_id,
+            "force_install_item": wanted_item,
+            "installed": installed,
+            "forcelist_count": len(forcelist),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "policy_file": str(CHROME_POLICY_PLIST)}
+
+
+def _write_chrome_native_host_manifest(plugin: Path) -> dict[str, Any]:
+    extension_config = _chrome_extension_config(plugin)
+    extension_id = extension_config["extension_id"]
+    host_name = extension_config["host_name"]
+    host_binary = _chrome_extension_host_binary(plugin)
+    if not host_binary.is_file() or not os.access(host_binary, os.X_OK):
+        return {"ok": False, "error": f"missing executable Chrome extension host: {host_binary}"}
+    browser_client = plugin / "scripts" / "browser-client.mjs"
+    if not browser_client.is_file():
+        return {"ok": False, "error": f"missing Chrome browser client: {browser_client}"}
+    codex_cli = OPENAI_CODEX_APP / "Contents" / "Resources" / "codex"
+    node = _chrome_plugin_node(plugin)
+    node_repl = OPENAI_CODEX_APP / "Contents" / "Resources" / "node_repl"
+    for required_path in (codex_cli, node, node_repl):
+        if not required_path.is_file():
+            return {"ok": False, "error": f"missing Codex app runtime path: {required_path}"}
+
+    host_config = {
+        "schemaVersion": 1,
+        "channel": "prod",
+        "browserClientPath": str(browser_client),
+        "codexCliPath": str(codex_cli),
+        "extensionId": extension_id,
+        "nodePath": str(node),
+        "nodeReplPath": str(node_repl),
+        "proxyHost": "127.0.0.1",
+        "proxyPort": 0,
+    }
+    host_config_path = host_binary.with_name("extension-host-config.json")
+    host_config_tmp = host_config_path.with_name(host_config_path.name + f".tmp-{os.getpid()}")
+    host_config_tmp.write_text(json.dumps(host_config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(host_config_tmp, host_config_path)
+
+    native_manifest = {
+        "allowed_origins": [f"chrome-extension://{extension_id}/"],
+        "description": "Codex chrome native messaging host",
+        "name": host_name,
+        "path": str(host_binary),
+        "type": "stdio",
+    }
+    manifest_path = CHROME_NATIVE_HOST_MANIFEST_DIR / f"{host_name}.json"
+    CHROME_NATIVE_HOST_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    manifest_tmp = manifest_path.with_name(manifest_path.name + f".tmp-{os.getpid()}")
+    manifest_tmp.write_text(json.dumps(native_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(manifest_tmp, 0o644)
+    os.replace(manifest_tmp, manifest_path)
+    return {
+        "ok": True,
+        "manifest_path": str(manifest_path),
+        "host_config_path": str(host_config_path),
+        "host_binary": str(host_binary),
+        "extension_id": extension_id,
+        "host_name": host_name,
+    }
+
+
+def chrome_extension_force_install(*, yes: bool = False) -> dict[str, Any]:
+    chrome_version, active_plugin_root, cache_ok = _installed_chrome_plugin_root()
+    marketplace_ok = _chrome_plugin_marketplace_ok()
+    plugin_copy_ok = _chrome_plugin_copy_ok(active_plugin_root)
+    before = chrome_plugin_status()
+    policy_before = _chrome_force_install_policy_status(active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
+    external_before = _chrome_external_extension_status(active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
+    if not yes:
+        return {
+            "ok": False,
+            "dry_run": True,
+            "changed": False,
+            "requires_yes": True,
+            "error": "Refusing to force-install the Codex Chrome Extension without --yes.",
+            "chrome_plugin_before": before,
+            "force_install_policy": policy_before,
+            "external_extension": external_before,
+            "next_step": "Rerun with --yes only if you want this command to write Chrome policy and native host files.",
+        }
+    if not marketplace_ok or not cache_ok or not plugin_copy_ok:
+        return {
+            "ok": False,
+            "changed": False,
+            "error": "Chrome plugin cache or marketplace copy is not healthy; run codex-computer-use-guard ensure-config first.",
+            "marketplace_ok": marketplace_ok,
+            "cache_ok": cache_ok,
+            "plugin_copy_ok": plugin_copy_ok,
+            "version": chrome_version,
+            "plugin_root": str(active_plugin_root),
+        }
+
+    manifest_install = _write_chrome_native_host_manifest(active_plugin_root)
+    policy_write: dict[str, Any]
+    policy_after: dict[str, Any]
+    external_write: dict[str, Any]
+    external_after: dict[str, Any]
+    if manifest_install.get("ok"):
+        extension_id = str(manifest_install["extension_id"])
+        external_write = _write_chrome_external_extension_file(extension_id)
+        wanted_item = _chrome_force_install_item(extension_id)
+        existing_items = _read_chrome_extension_forcelist()
+        preserved_items = [item for item in existing_items if not item.startswith(f"{extension_id};")]
+        desired_items = preserved_items + [wanted_item]
+        policy_write = _write_chrome_extension_forcelist(desired_items)
+        policy_after = _chrome_force_install_policy_status(active_plugin_root)
+        external_after = _chrome_external_extension_status(active_plugin_root)
+    else:
+        policy_write = {"ok": False, "error": "native host manifest install failed"}
+        policy_after = policy_before
+        external_write = {"ok": False, "error": "native host manifest install failed"}
+        external_after = external_before
+    after = chrome_plugin_status()
+    install_request_ok = bool(policy_write.get("ok") or external_after.get("ok"))
+    ok = bool(manifest_install.get("ok") and install_request_ok and after.get("native_host", {}).get("ok"))
+    return {
+        "ok": ok,
+        "changed": bool(manifest_install.get("ok") or policy_write.get("ok")),
+        "command": "chrome-extension-force-install",
+        "version": chrome_version,
+        "plugin_root": str(active_plugin_root),
+        "manifest_install": manifest_install,
+        "policy_before": policy_before,
+        "policy_write": policy_write,
+        "policy_after": policy_after,
+        "external_before": external_before,
+        "external_write": external_write,
+        "external_after": external_after,
+        "chrome_plugin_before": before,
+        "chrome_plugin_after": after,
+        "next_step": (
+            "Restart Google Chrome, confirm the Codex Chrome Extension shows Connected, then start a fresh Codex thread."
+            if ok
+            else "Review manifest_install and policy_write errors, then retry the official Codex Plugins setup flow."
+        ),
+    }
+
+
 def chrome_plugin_status() -> dict[str, Any]:
     config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
     plugin_enabled = bool(
@@ -1998,6 +2266,14 @@ def chrome_plugin_status() -> dict[str, Any]:
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
     }
+    force_install_policy = _chrome_force_install_policy_status(active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
+    external_extension = _chrome_external_extension_status(active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
     chrome_running = _run_chrome_plugin_check("chrome-is-running.js", plugin=active_plugin_root, timeout=5) if plugin_copy_ok else {
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
@@ -2011,9 +2287,9 @@ def chrome_plugin_status() -> dict[str, Any]:
     elif not plugin_enabled or disabled:
         next_step = "Run codex-computer-use-guard ensure-config to enable the official Chrome plugin route."
     elif not native_host.get("ok"):
-        next_step = "Remove and re-add the Chrome plugin from Codex Plugins, then follow the setup flow."
+        next_step = "Remove and re-add the Chrome plugin from Codex Plugins, or run codex-computer-use-guard chrome-extension-force-install --yes."
     elif not extension.get("ok"):
-        next_step = "Install and enable the Codex Chrome Extension in the active Chrome profile."
+        next_step = "Install and enable the Codex Chrome Extension in the active Chrome profile, or run codex-computer-use-guard chrome-extension-force-install --yes."
     elif not chrome_running.get("ok"):
         next_step = "Open Google Chrome before starting an extension-backed Chrome task."
     return {
@@ -2028,6 +2304,8 @@ def chrome_plugin_status() -> dict[str, Any]:
         "extension_id": (extension.get("extensionId") or native_host.get("expectedExtensionId") or ""),
         "native_host": native_host,
         "extension": extension,
+        "force_install_policy": force_install_policy,
+        "external_extension": external_extension,
         "chrome_running": chrome_running,
         "next_step": next_step,
     }
@@ -4352,6 +4630,8 @@ def main(argv: list[str]) -> int:
             payload = _run_chrome_smoke()
         elif command in {"chrome-plugin-status", "chrome-extension-status"}:
             payload = chrome_plugin_status()
+        elif command in {"chrome-extension-force-install", "force-install-chrome-extension"}:
+            payload = chrome_extension_force_install(yes="--yes" in argv)
         elif command in {"browser-plugin-status", "browser-status"}:
             payload = browser_plugin_status()
         elif command == "clear-native-smoke":

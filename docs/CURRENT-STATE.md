@@ -132,8 +132,14 @@ Expected high-level result:
   `$HOME/.codex/bin/codex-computer-use-guard chrome-plugin-status`. The guard
   keeps `chrome@openai-bundled` enabled and checks the bundled plugin helper
   scripts for the native host manifest and active-profile extension install,
-  but it does not install the Chrome extension or native host outside the
-  official Codex Plugins setup flow.
+  while normal setup still starts with OpenAI's documented Codex Plugins setup
+  flow. If that route fails, the explicit
+  `$HOME/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes`
+  fallback writes the per-user Chrome native host manifest and adds the Codex
+  Chrome Extension to Chrome's `ExtensionInstallForcelist` policy plus Chrome's
+  documented per-user `External Extensions/<extension-id>.json` Web Store update
+  file. That fallback is separate from normal `ensure` and from native Computer
+  Use smoke health.
 - The official in-app Browser plugin route is reported separately as
   `browser_plugin` and can be checked with
   `$HOME/.codex/bin/codex-computer-use-guard browser-plugin-status`. The guard

@@ -235,9 +235,23 @@ $HOME/.codex/bin/codex-computer-use-guard chrome-plugin-status
 This checks that the bundled `chrome@openai-bundled` plugin is enabled, the
 local marketplace mirror contains the Chrome plugin, the Chrome native host
 manifest is present, and the active Chrome profile has the Codex Chrome
-Extension installed and enabled. It does not install the extension or native
-host; if those checks fail, re-add the Chrome plugin from Codex Plugins and
-follow the official setup flow.
+Extension installed and enabled. The primary setup path is still OpenAI's
+documented Codex Plugins flow:
+<https://developers.openai.com/codex/app/chrome-extension>.
+
+If that setup path does not materialize the extension or native host, use the
+explicit force-install fallback:
+
+```bash
+$HOME/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes
+```
+
+That command writes the per-user Chrome native-messaging host manifest for the
+bundled Codex Chrome plugin, adds the Codex Chrome Extension to Chrome's
+`ExtensionInstallForcelist` policy, and writes Chrome's documented per-user
+`External Extensions/<extension-id>.json` Web Store update file. Restart Chrome
+afterward, confirm the extension shows Connected, and start a fresh Codex
+thread.
 
 The bundled in-app Browser plugin route is also kept enabled:
 

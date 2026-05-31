@@ -114,6 +114,10 @@ Responsibilities:
 - Keep `chrome@openai-bundled` enabled and cached when the official bundled
   Chrome plugin is present, so extension-backed Chrome discovery does not
   interfere with Computer Use tool discovery.
+- Keep Chrome Extension setup separate: status reads native-host, extension,
+  and force-install policy state; the explicit force-install command may write
+  Chrome native-messaging, `ExtensionInstallForcelist`, and per-user
+  `External Extensions` state, but normal `ensure` does not.
 - Remove `tool_suggest.disabled_tools` entries for
   `computer-use@openai-bundled` and `chrome@openai-bundled`.
 - Keep marketplace mirrors patched so plugin loading uses the local native

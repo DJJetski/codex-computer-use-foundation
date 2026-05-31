@@ -902,7 +902,7 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("browser automation", smoke_body)
         self.assertIn("chrome_native_smoke", smoke_body)
 
-    def test_chrome_plugin_status_uses_official_extension_checks_without_installing_host(self) -> None:
+    def test_chrome_plugin_status_reports_official_extension_checks_and_force_path(self) -> None:
         guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
         function_start = guard_source.index("def chrome_plugin_status()")
         function_end = guard_source.index("def _computer_use_manifest_without_skills", function_start)
@@ -914,10 +914,27 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("check-native-host-manifest.js", status_body)
         self.assertIn("check-extension-installed.js", status_body)
         self.assertIn("chrome-is-running.js", status_body)
-        self.assertIn("Remove and re-add the Chrome plugin from Codex Plugins", status_body)
+        self.assertIn("chrome-extension-force-install --yes", status_body)
         self.assertNotIn("installManifest.mjs", status_body)
         self.assertIn('plugin_name == "chrome" and not _chrome_plugin_copy_ok(dest_plugin)', guard_source)
         self.assertIn('plugin_name == "browser" and not _generic_plugin_copy_ok(dest_plugin, "browser")', guard_source)
+
+    def test_chrome_extension_force_install_is_explicit_and_policy_based(self) -> None:
+        guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
+        function_start = guard_source.index("def chrome_extension_force_install(")
+        function_end = guard_source.index("def chrome_plugin_status()", function_start)
+        force_body = guard_source[function_start:function_end]
+
+        self.assertIn("Refusing to force-install the Codex Chrome Extension without --yes", force_body)
+        self.assertIn("ExtensionInstallForcelist", guard_source)
+        self.assertIn("https://clients2.google.com/service/update2/crx", guard_source)
+        self.assertIn("NativeMessagingHosts", guard_source)
+        self.assertIn("External Extensions", guard_source)
+        self.assertIn("external_update_url", guard_source)
+        self.assertIn("extension-host-config.json", guard_source)
+        self.assertIn("browser-client.mjs", guard_source)
+        self.assertIn("chrome-extension-force-install", guard_source)
+        self.assertNotIn("import installManifest.mjs", force_body)
 
     def test_native_smoke_detects_coordinate_click_attempts(self) -> None:
         guard = load_guard_module()

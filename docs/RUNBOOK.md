@@ -169,11 +169,24 @@ Expected for extension-backed Chrome use:
 - `extension.ok=true`
 
 This diagnostic follows the official Chrome plugin boundary. It may enable the
-Codex Chrome plugin in config through `ensure-config`, but it does not install
-or repair the Chrome native host or extension itself. If the native host or
-extension checks fail, remove and re-add the Chrome plugin from Codex Plugins,
-complete the setup flow, confirm the extension shows Connected, and then start
-a fresh Codex thread.
+Codex Chrome plugin in config through `ensure-config`. The primary install path
+is OpenAI's documented Codex Plugins setup flow:
+<https://developers.openai.com/codex/app/chrome-extension>.
+
+If that flow still leaves the native host or active-profile extension missing,
+use the explicit force-install fallback:
+
+```bash
+~/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes | jq '{ok,changed,manifest_install:{ok,manifest_path,host_config_path,error},policy_after,external_after,next_step}'
+```
+
+The fallback writes the per-user Chrome native-messaging host manifest for the
+bundled Codex Chrome plugin, adds the Codex Chrome Extension to Chrome's
+`ExtensionInstallForcelist` policy, and writes Chrome's documented per-user
+`External Extensions/<extension-id>.json` Web Store update file. It is
+intentionally not part of normal `ensure`, because force-installed Chrome
+extensions are browser policy changes. After it succeeds, restart Chrome,
+confirm the extension shows Connected, and then start a fresh Codex thread.
 
 ## Preflight For A Planned GUI Task
 
