@@ -184,7 +184,7 @@ release audit, package build, and release drill against a temporary home.
 
 Release notes describe the exact capability and validation changes for that
 package. Start with the latest note:
-[`docs/releases/v0.1.13.md`](docs/releases/v0.1.13.md).
+[`docs/releases/v0.1.14.md`](docs/releases/v0.1.14.md).
 
 ## Native Tool Surface
 
@@ -235,9 +235,10 @@ $HOME/.codex/bin/codex-computer-use-guard chrome-plugin-status
 This checks that the bundled `chrome@openai-bundled` plugin is enabled, the
 local marketplace mirror contains the Chrome plugin, the Chrome native host
 manifest is present, the active Chrome profile has the Codex Chrome Extension
-installed and enabled, and the bundled Chrome browser-client can keep the
-extension backend in its Browser Use list. The primary setup path is still
-OpenAI's documented Codex Plugins flow:
+installed and enabled, the local Chrome skill tells agents to force-repair
+instead of stopping at manual reinstall advice, and the bundled Chrome
+browser-client can keep the extension backend in its Browser Use list. The
+primary setup path starts with OpenAI's documented Codex Plugins flow:
 <https://developers.openai.com/codex/app/chrome-extension>.
 
 The normal guard repair paths now keep the local force files present and patch
@@ -249,7 +250,8 @@ $HOME/.codex/bin/codex-computer-use-guard ensure-config
 $HOME/.codex/bin/codex-computer-use-guard ensure
 ```
 
-If that setup path does not materialize the extension or native host, use the
+If that setup path does not materialize the extension, native host, force
+policy, external extension file, or browser-client extension route, use the
 explicit force-install fallback:
 
 ```bash
@@ -258,13 +260,17 @@ $HOME/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes
 
 That command writes the per-user Chrome native-messaging host manifest for the
 bundled Codex Chrome plugin, adds the Codex Chrome Extension to Chrome's
-`ExtensionInstallForcelist` policy, and writes Chrome's documented per-user
-`External Extensions/<extension-id>.json` Web Store update file. If a thread
-still reports `Browser is not available: extension` after those files are
-present, rerun `ensure-config` or `chrome-plugin-status --repair`; the guard
-restores the browser-client socket path without replacing the official Chrome
-Browser Use API. Restart Chrome afterward, confirm the extension shows
-Connected, and start a fresh Codex thread.
+`ExtensionInstallForcelist` policy, writes Chrome's documented per-user
+`External Extensions/<extension-id>.json` Web Store update file, and leaves the
+guard in position to patch the Chrome browser-client and local Chrome skill on
+every `ensure-config`. If a thread still reports
+`Browser is not available: extension` after those files are present, rerun
+`ensure-config` or `chrome-plugin-status --repair`; the guard restores the
+browser-client socket path without replacing the official Chrome Browser Use
+API. Restart Chrome afterward if Chrome had already cached old extension state,
+then start a fresh Codex thread. In that thread, select the Chrome backend by
+the `id` returned from `agent.browsers.list()` for the `type="extension"`
+browser; do not rely on a hard-coded `"extension"` browser id.
 
 The bundled in-app Browser plugin route is also kept enabled:
 

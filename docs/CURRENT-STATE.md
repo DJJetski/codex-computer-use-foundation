@@ -136,7 +136,9 @@ Expected high-level result:
   the bundled Chrome browser-client so the extension backend remains reachable
   through the original Browser Use API when Codex's injected `nativePipe` is
   absent or incomplete. It does not replace Browser Use with a separate
-  automation path.
+  automation path. It also patches the installed Chrome skill copy so future
+  agents use the Foundation force-repair path and select Chrome by the returned
+  Browser Use backend id instead of a hard-coded `"extension"` id.
   while normal setup still starts with OpenAI's documented Codex Plugins setup
   flow. If that route fails, the explicit
   `$HOME/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes`
@@ -144,11 +146,12 @@ Expected high-level result:
   Chrome Extension to Chrome's `ExtensionInstallForcelist` policy plus Chrome's
   documented per-user `External Extensions/<extension-id>.json` Web Store update
   file. `ensure-config` and `ensure` now keep those local force files and the
-  browser-client patch repaired idempotently once the bundled Chrome plugin
-  cache is healthy, while `chrome-plugin-status` remains the diagnostic view
-  unless invoked with `--repair` or `--ensure`. This lane remains separate from
-  native Computer Use smoke health, and its optional `extension_backend`
-  subprocess probe is diagnostic rather than authoritative.
+  browser-client patch and local Chrome skill guidance repaired idempotently
+  once the bundled Chrome plugin cache is healthy, while
+  `chrome-plugin-status` remains the diagnostic view unless invoked with
+  `--repair` or `--ensure`. This lane remains separate from native Computer Use
+  smoke health, and its optional `extension_backend` subprocess probe is
+  diagnostic rather than authoritative.
 - The official in-app Browser plugin route is reported separately as
   `browser_plugin` and can be checked with
   `$HOME/.codex/bin/codex-computer-use-guard browser-plugin-status`. The guard

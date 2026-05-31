@@ -156,7 +156,7 @@ Use this when a task needs the official Codex Chrome Extension path for a
 signed-in Chrome profile:
 
 ```bash
-~/.codex/bin/codex-computer-use-guard chrome-plugin-status | jq '{ok,plugin_enabled,disabled,marketplace_ok,extension_id,native_host:{ok,exit_code,error},extension:{ok,exit_code,installed,enabled,selectedProfileDirectory,error},force_install_policy:{ok,installed},external_extension:{ok,exists},browser_client_patch:{ok,patched},chrome_running:{ok,running},extension_backend:{ok,health_gate,authoritative,error},next_step}'
+~/.codex/bin/codex-computer-use-guard chrome-plugin-status | jq '{ok,plugin_enabled,disabled,marketplace_ok,extension_id,native_host:{ok,exit_code,error},extension:{ok,exit_code,installed,enabled,selectedProfileDirectory,error},force_install_policy:{ok,installed},external_extension:{ok,exists},browser_client_patch:{ok,patched},chrome_skill_patch:{ok,patched},chrome_running:{ok,running},extension_backend:{ok,health_gate,authoritative,error},next_step}'
 ```
 
 Expected for extension-backed Chrome use:
@@ -170,20 +170,24 @@ Expected for extension-backed Chrome use:
 - `force_install_policy.ok=true`
 - `external_extension.ok=true`
 - `browser_client_patch.ok=true`
+- `chrome_skill_patch.ok=true`
 - `chrome_running.ok=true`
 
 This diagnostic follows the official Chrome plugin boundary. It may enable the
 Codex Chrome plugin in config through `ensure-config`. The primary install path
-is OpenAI's documented Codex Plugins setup flow:
+starts with OpenAI's documented Codex Plugins setup flow:
 <https://developers.openai.com/codex/app/chrome-extension>.
 
 The normal guard repair paths keep the local native host manifest,
 `ExtensionInstallForcelist`, per-user `External Extensions` file, and bundled
-Chrome browser-client socket patch present once the plugin cache is healthy:
+Chrome browser-client socket patch present once the plugin cache is healthy.
+They also patch the local cached Chrome skill so future agents force-repair this
+route and select Chrome by the browser id returned from
+`agent.browsers.list()` instead of stopping at manual reinstall advice:
 
 ```bash
-~/.codex/bin/codex-computer-use-guard ensure-config | jq '{structural_ok,chrome_plugin:{ok,native_host:{ok,error},force_install_policy,external_extension,browser_client_patch,auto_repair}}'
-~/.codex/bin/codex-computer-use-guard ensure | jq '{ok,chrome_plugin:{ok,native_host:{ok,error},force_install_policy,external_extension,browser_client_patch,auto_repair}}'
+~/.codex/bin/codex-computer-use-guard ensure-config | jq '{structural_ok,chrome_plugin:{ok,native_host:{ok,error},force_install_policy,external_extension,browser_client_patch,chrome_skill_patch,auto_repair}}'
+~/.codex/bin/codex-computer-use-guard ensure | jq '{ok,chrome_plugin:{ok,native_host:{ok,error},force_install_policy,external_extension,browser_client_patch,chrome_skill_patch,auto_repair}}'
 ```
 
 If that flow still leaves the native host or active-profile extension missing,
@@ -201,11 +205,12 @@ succeeds, restart Chrome, confirm the extension shows Connected, and then start
 a fresh Codex thread.
 
 If `native_host`, `extension`, `force_install_policy`, `external_extension`,
-and `browser_client_patch` are all green but an already-open thread still says
-`Browser is not available: extension`, treat the thread as stale. In a fresh
-Node REPL or Chrome task, the Browser Use list should include an entry with
-`type="extension"` and `metadata.extensionId` matching `extension_id`; select
-that browser by its `id`, not by the literal string `extension`.
+`browser_client_patch`, and `chrome_skill_patch` are all green but an
+already-open thread still says `Browser is not available: extension`, treat the
+thread as stale. In a fresh Node REPL or Chrome task, the Browser Use list
+should include an entry with `type="extension"` and `metadata.extensionId`
+matching `extension_id`; select that browser by its `id`, not by the literal
+string `extension`.
 `extension_backend` is a non-authoritative guard subprocess probe and is not a
 health gate, because the real Codex Node REPL/Browser Use context can reach
 extension sockets that the guard subprocess may time out on.

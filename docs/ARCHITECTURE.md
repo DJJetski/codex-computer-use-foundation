@@ -124,6 +124,12 @@ Responsibilities:
   `type="extension"` backends in its list. This preserves the official Chrome
   plugin API surface; it is not a hidden AppleScript, Playwright, or GUI
   fallback.
+- Patch the installed Chrome skill cache copy so agents use the local
+  Foundation force-repair path for native host, force-install policy, external
+  extension file, and browser-client extension discovery issues. The patched
+  skill must select Chrome by the backend id returned from
+  `agent.browsers.list()`, because a literal `"extension"` id is not stable
+  across all Browser Use runtimes.
 - Remove `tool_suggest.disabled_tools` entries for
   `computer-use@openai-bundled` and `chrome@openai-bundled`.
 - Keep marketplace mirrors patched so plugin loading uses the local native

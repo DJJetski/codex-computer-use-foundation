@@ -1924,6 +1924,7 @@ def ensure_chrome_cache() -> tuple[str, Path, bool]:
         _copy_cache(CHROME_SOURCE, dest)
         changed = True
     changed = _ensure_chrome_browser_client_direct_pipe_patch(dest) or changed
+    changed = _ensure_chrome_skill_force_repair_guidance_patch(dest) or changed
     return version, dest, changed
 
 
@@ -1980,10 +1981,148 @@ CHROME_BROWSER_CLIENT_EXTENSION_FILTER_ORIGINAL = (
 CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED = (
     'for(let n of e)(n.info?.type==="extension"||_h(Il(n.info.type)))?t.push(n):r.push(n);'
 )
+CHROME_SKILL_FORCE_REPAIR_MARKER = "LOCAL FOUNDATION FORCE REPAIR OVERRIDE"
+CHROME_SKILL_CONSERVATIVE_NATIVE_HOST_TEXT = (
+    "Do not install or repair the native host yourself. If native host setup appears broken, "
+    "tell the user to reinstall the Chrome plugin from the Codex plugin UI."
+)
+CHROME_SKILL_FORCE_NATIVE_HOST_TEXT = (
+    "Local Foundation override: repair Chrome Extension/native-host setup through "
+    "`codex-computer-use-guard chrome-plugin-status --repair`, `ensure-config`, or "
+    "`chrome-extension-force-install --yes` before asking the user to reinstall manually."
+)
+CHROME_SKILL_CONSERVATIVE_MANIFEST_TEXT = (
+    "Do not install or repair the native host yourself. If native host setup appears broken, "
+    "tell the user to reinstall the Chrome plugin from the Codex plugin UI."
+)
+CHROME_SKILL_FORCE_MANIFEST_TEXT = (
+    "Run `~/.codex/bin/codex-computer-use-guard chrome-plugin-status --repair` first. "
+    "If the manifest remains missing or invalid, run "
+    "`~/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes`, then "
+    "restart Chrome and retry the browser-client setup."
+)
+CHROME_SKILL_CONSERVATIVE_FINAL_TEXT = (
+    "If the issue is specifically the native host or extension-backed install path, or if "
+    "communication still fails after opening a Chrome window and retrying setup once, tell the "
+    "user to reinstall the Chrome plugin from the Codex plugin UI. Never import or run "
+    "`scripts/installManifest.mjs` yourself."
+)
+CHROME_SKILL_FORCE_FINAL_TEXT = (
+    "If the issue is specifically the native host, force-install policy, external extension "
+    "file, active-profile extension, or browser-client extension discovery path, run the "
+    "Foundation force repair path: `~/.codex/bin/codex-computer-use-guard "
+    "chrome-plugin-status --repair`, then "
+    "`~/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes` if any "
+    "install file is still missing. Do not import or run `scripts/installManifest.mjs`; the "
+    "guard writes the local files from bundled plugin metadata and preserves the official "
+    "Chrome Browser Use API."
+)
+CHROME_SKILL_HARDCODED_EXTENSION_GET = 'globalThis.browser = await agent.browsers.get("extension");'
+CHROME_SKILL_HARDCODED_CONST_EXTENSION_GET = 'const browser = await agent.browsers.get("extension");'
+CHROME_SKILL_DYNAMIC_EXTENSION_GET = """const chromeBrowsers = await agent.browsers.list();
+const chromeBrowserInfo = chromeBrowsers.find(
+  (candidate) => candidate.type === "extension" || candidate.name === "Chrome"
+);
+if (!chromeBrowserInfo) {
+  throw new Error("Chrome extension backend was not listed by Browser Use after Foundation repair.");
+}
+globalThis.browser = await agent.browsers.get(chromeBrowserInfo.id);"""
+CHROME_SKILL_DYNAMIC_CONST_EXTENSION_GET = """const chromeBrowsers = await agent.browsers.list();
+const chromeBrowserInfo = chromeBrowsers.find(
+  (candidate) => candidate.type === "extension" || candidate.name === "Chrome"
+);
+if (!chromeBrowserInfo) {
+  throw new Error("Chrome extension backend was not listed by Browser Use after Foundation repair.");
+}
+const browser = await agent.browsers.get(chromeBrowserInfo.id);"""
 
 
 def _chrome_browser_client_path(plugin: Path) -> Path:
     return plugin / "scripts" / "browser-client.mjs"
+
+
+def _chrome_skill_path(plugin: Path) -> Path:
+    for relative in (
+        "skills/control-chrome/SKILL.md",
+        "skills/chrome/SKILL.md",
+    ):
+        candidate = plugin / relative
+        if candidate.is_file():
+            return candidate
+    return plugin / "skills" / "control-chrome" / "SKILL.md"
+
+
+def _chrome_skill_force_repair_guidance_patch_status(plugin: Path) -> dict[str, Any]:
+    skill = _chrome_skill_path(plugin)
+    if not skill.is_file():
+        return {
+            "ok": False,
+            "patched": False,
+            "skill": str(skill),
+            "error": "missing Chrome skill",
+        }
+    try:
+        source = skill.read_text(encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "patched": False,
+            "skill": str(skill),
+            "error": f"could not read Chrome skill: {exc}",
+        }
+    patched = (
+        CHROME_SKILL_FORCE_REPAIR_MARKER in source
+        and CHROME_SKILL_FORCE_NATIVE_HOST_TEXT in source
+        and CHROME_SKILL_DYNAMIC_EXTENSION_GET in source
+        and CHROME_SKILL_HARDCODED_EXTENSION_GET not in source
+        and CHROME_SKILL_HARDCODED_CONST_EXTENSION_GET not in source
+    )
+    return {
+        "ok": patched,
+        "patched": patched,
+        "skill": str(skill),
+        "reason": "" if patched else "Chrome skill still uses conservative/manual extension recovery guidance",
+    }
+
+
+def _ensure_chrome_skill_force_repair_guidance_patch(plugin: Path) -> bool:
+    skill = _chrome_skill_path(plugin)
+    if not skill.is_file():
+        return False
+    source = skill.read_text(encoding="utf-8")
+    if _chrome_skill_force_repair_guidance_patch_status(plugin).get("ok"):
+        return False
+    updated = source
+    updated = updated.replace(CHROME_SKILL_CONSERVATIVE_NATIVE_HOST_TEXT, CHROME_SKILL_FORCE_NATIVE_HOST_TEXT)
+    updated = updated.replace(CHROME_SKILL_CONSERVATIVE_MANIFEST_TEXT, CHROME_SKILL_FORCE_MANIFEST_TEXT)
+    updated = updated.replace(CHROME_SKILL_CONSERVATIVE_FINAL_TEXT, CHROME_SKILL_FORCE_FINAL_TEXT)
+    updated = updated.replace(CHROME_SKILL_HARDCODED_EXTENSION_GET, CHROME_SKILL_DYNAMIC_EXTENSION_GET)
+    updated = updated.replace(CHROME_SKILL_HARDCODED_CONST_EXTENSION_GET, CHROME_SKILL_DYNAMIC_CONST_EXTENSION_GET)
+    if CHROME_SKILL_FORCE_REPAIR_MARKER not in updated:
+        marker = (
+            "\n"
+            "<!-- LOCAL FOUNDATION FORCE REPAIR OVERRIDE: this installed Chrome skill copy is "
+            "patched by codex-computer-use-guard so local agents force-repair native host, "
+            "force-install, external extension, and browser-client discovery state before "
+            "telling the user to reinstall manually. -->\n"
+        )
+        if "\n# Chrome\n" in updated:
+            updated = updated.replace("\n# Chrome\n", "\n# Chrome\n" + marker, 1)
+        else:
+            updated = marker + updated
+    if (
+        CHROME_SKILL_FORCE_REPAIR_MARKER not in updated
+        or CHROME_SKILL_FORCE_NATIVE_HOST_TEXT not in updated
+        or CHROME_SKILL_DYNAMIC_EXTENSION_GET not in updated
+        or CHROME_SKILL_HARDCODED_EXTENSION_GET in updated
+        or CHROME_SKILL_HARDCODED_CONST_EXTENSION_GET in updated
+    ):
+        return False
+    tmp = skill.with_name(skill.name + f".tmp-{os.getpid()}")
+    tmp.write_text(updated, encoding="utf-8")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, skill)
+    return True
 
 
 def _chrome_browser_client_direct_pipe_patch_status(plugin: Path) -> dict[str, Any]:
@@ -2581,6 +2720,10 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
     }
+    chrome_skill_patch = _chrome_skill_force_repair_guidance_patch_status(active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
     auto_repair_result: dict[str, Any] = {"attempted": False}
     if (
         auto_repair
@@ -2594,18 +2737,22 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
             or not force_install_policy.get("ok")
             or not external_extension.get("ok")
             or not browser_client_patch.get("ok")
+            or not chrome_skill_patch.get("ok")
         )
     ):
         patch_changed = _ensure_chrome_browser_client_direct_pipe_patch(active_plugin_root)
+        skill_patch_changed = _ensure_chrome_skill_force_repair_guidance_patch(active_plugin_root)
         auto_repair_result = {
             "attempted": True,
             **_repair_chrome_extension_force_files(active_plugin_root),
             "browser_client_patch_changed": patch_changed,
+            "chrome_skill_patch_changed": skill_patch_changed,
         }
         native_host = _run_chrome_plugin_check("check-native-host-manifest.js", plugin=active_plugin_root)
         force_install_policy = _chrome_force_install_policy_status(active_plugin_root)
         external_extension = _chrome_external_extension_status(active_plugin_root)
         browser_client_patch = _chrome_browser_client_direct_pipe_patch_status(active_plugin_root)
+        chrome_skill_patch = _chrome_skill_force_repair_guidance_patch_status(active_plugin_root)
     chrome_running = _run_chrome_plugin_check("chrome-is-running.js", plugin=active_plugin_root, timeout=5) if plugin_copy_ok else {
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
@@ -2629,6 +2776,7 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         and external_extension.get("ok")
         and chrome_running.get("ok")
         and browser_client_patch.get("ok")
+        and chrome_skill_patch.get("ok")
     )
     next_step = ""
     if not marketplace_ok:
@@ -2647,6 +2795,8 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         next_step = "Run codex-computer-use-guard chrome-extension-force-install --yes to restore Chrome's external extension install file."
     elif not browser_client_patch.get("ok"):
         next_step = "Run codex-computer-use-guard ensure-config to patch the Chrome browser-client native-pipe fallback."
+    elif not chrome_skill_patch.get("ok"):
+        next_step = "Run codex-computer-use-guard ensure-config to patch the local Chrome skill force-repair guidance."
     elif not chrome_running.get("ok"):
         next_step = "Open Google Chrome before starting an extension-backed Chrome task."
     return {
@@ -2664,6 +2814,7 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         "force_install_policy": force_install_policy,
         "external_extension": external_extension,
         "browser_client_patch": browser_client_patch,
+        "chrome_skill_patch": chrome_skill_patch,
         "extension_backend": extension_backend,
         "auto_repair": auto_repair_result,
         "chrome_running": chrome_running,
@@ -2777,6 +2928,7 @@ def _mirror_bundled_marketplace(source: Path, dest: Path, *, patch_computer_use:
             changed = ensure_plugin_skill_suppressed(dest_plugin) or changed
         if plugin_name == "chrome" and dest_plugin.is_dir():
             changed = _ensure_chrome_browser_client_direct_pipe_patch(dest_plugin) or changed
+            changed = _ensure_chrome_skill_force_repair_guidance_patch(dest_plugin) or changed
     return changed
 
 

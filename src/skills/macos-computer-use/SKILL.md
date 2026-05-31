@@ -12,9 +12,11 @@ Computer Use repair package.
 
 The assumed starting point is a Mac with Codex installed where native Computer
 Use is not working yet, is not exposed in a fresh thread, or times out. This
-skill directs agents to repair and prove the native Computer Use path, not to
-substitute AppleScript, screenshots, pointer automation, Playwright, Keyboard
-Maestro, or VPN for native Computer Use.
+skill directs agents to repair, force-refresh, and prove the native Computer
+Use path aggressively inside the local Codex runtime. It must not stop at
+advice when the guard can repair the installed plugin/cache/config/native-host
+state, and it must not substitute AppleScript, screenshots, pointer automation,
+Playwright, Keyboard Maestro, or VPN for native Computer Use.
 
 Native Computer Use is preferred because it is the official Codex MCP route to
 the OpenAI Mac Computer Use client. It can preserve the Codex AppServer /
@@ -69,6 +71,14 @@ Use this skill when the task requires operating the real Mac session:
 For browser work tied to existing login state, also use the `agent-browser`
 skill and stay in the user's normal browser session.
 
+For Chrome work tied to the user's logged-in Chrome profile, use the official
+Chrome Browser Use route after this skill has made sure the local repair layer
+is healthy. On this machine, a broken Chrome Extension/native-host/browser-client
+materialization is a repair target, not a reason to stop at "reinstall the
+Chrome plugin." The local guard owns the force-install fallback and must keep
+the official Chrome plugin route reachable through the original Browser Use
+API.
+
 ## Default Strategy
 
 1. Prefer the user's real local session and the installed app they already use.
@@ -90,6 +100,9 @@ skill and stay in the user's normal browser session.
    installed route may be repaired while the current thread's MCP transport is
    stale. Open a fresh Codex thread after `ensure`; do not switch to fallback
    automation as proof of native success.
+   If `status` reports stale smoke while `mcp__computer_use__.list_apps` works
+   in the active thread, still run full `ensure`; the guard is intentionally
+   fail-closed until it has fresh authoritative smoke evidence.
 4. Begin each native Computer Use turn with `get_app_state` for the target app.
 5. Prefer element-index actions from the accessibility tree over coordinates.
 6. For Google Chrome address/search-field navigation, prefer the native
@@ -110,6 +123,24 @@ skill and stay in the user's normal browser session.
    state that it is not native Computer Use.
 10. Use isolated Playwright/test-browser surfaces only when isolation is the
    actual goal or the real-session path is unavailable.
+11. For authenticated Chrome/browser tasks, verify the Chrome route separately
+    with `chrome-plugin-status --repair`. If native host, active-profile
+    extension, managed force-install policy, external extension file, or the
+    patched browser-client route is missing, run the guard's Chrome force path
+    instead of asking the user to reinstall manually:
+
+    ```bash
+    ~/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes
+    ~/.codex/bin/codex-computer-use-guard ensure-config
+    ~/.codex/bin/codex-computer-use-guard chrome-plugin-status --repair
+    ```
+
+    After that, connect through the Chrome plugin's `scripts/browser-client.mjs`
+    with the Node REPL `js` tool, list `agent.browsers.list()`, select the
+    returned browser whose `type` is `extension` and whose metadata extension id
+    matches the Codex Chrome Extension, then call `agent.browsers.get(<that id>)`.
+    Do not assume the literal id `"extension"` works in every runtime; the
+    returned browser id is the stable current-session handle.
 
 Native app-level safety refusals are different from broken Computer Use. If a
 native MCP call returns text like `Computer Use is not allowed to use the app
@@ -189,6 +220,10 @@ CODEX_APP="$(cat "$HOME/.codex/state/computer-use-guard/codex-app-path" 2>/dev/n
 The guard must keep all of these true:
 
 - `computer-use@openai-bundled` plugin enabled
+- `chrome@openai-bundled` and `browser@openai-bundled` plugin routes enabled
+  and unsuppressed when their bundled plugin copies are present, because
+  authenticated Chrome Browser Use and in-app Browser Use are separate
+  official routes that must survive Codex restarts and plugin-cache rewrites
 - no `tool_suggest.disabled_tools` entry for `computer-use@openai-bundled`
 - the app-bundled marketplace is mirrored into the stable local source
   `~/.codex/plugins/marketplaces/openai-bundled`, and
@@ -275,6 +310,20 @@ The guard must keep all of these true:
   LaunchAgent path
 - service readiness uses persisted `com.openai.sky.CUAService` AppData approval
   or a local AppData marker instead of repeated background service probes
+- Chrome Extension repair is forceful and local: the guard writes the per-user
+  Native Messaging host manifest, Chrome `ExtensionInstallForcelist`, and
+  per-user `External Extensions/<extension-id>.json` Web Store update file from
+  the installed bundled Chrome plugin metadata when `--repair`, `ensure-config`,
+  `ensure`, or `chrome-extension-force-install --yes` requires it. This is not
+  a cookie/session export and not a separate automation backend; it restores the
+  official Codex Chrome Extension path.
+- the bundled Chrome browser-client cache copy is patched so it can connect to
+  `/tmp/codex-browser-use` directly when Codex's injected native pipe is absent
+  or incomplete, and so `type="extension"` backends remain in
+  `agent.browsers.list()`. This patch preserves the original Browser Use API.
+- the local cached Chrome skill must instruct agents to use the force-repair
+  path and to select Chrome by the browser id returned from
+  `agent.browsers.list()`, not by a hard-coded `"extension"` id.
 
 The self-healing LaunchAgent is:
 
@@ -309,6 +358,14 @@ current-thread tool metadata that was loaded before repair. If tools are
 visible but native calls return `Transport closed`, the current thread's MCP
 transport is broken; record a failed native smoke and test a fresh Codex
 session before claiming current-thread operational health.
+
+For Chrome Browser Use, `chrome-plugin-status.ok=true` proves the local
+extension/native-host/force-install/browser-client structure. The optional
+`extension_backend` field is only a guard subprocess diagnostic; it may be
+false when the real Codex Node REPL context can connect successfully. The
+authoritative Chrome proof is a Browser Use setup in the active Codex context
+where `agent.browsers.list()` returns a `type="extension"` Chrome backend and
+`browser.user.openTabs()` succeeds.
 
 ## Explicit Low-Interference Fallbacks
 

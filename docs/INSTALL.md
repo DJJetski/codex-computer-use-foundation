@@ -181,7 +181,7 @@ The guard may also create or repair these generated local surfaces:
 | `$HOME/.codex/plugins/marketplaces/openai-bundled` | Stable local mirror of the bundled marketplace that Codex can load. |
 | `$HOME/.codex/.tmp/bundled-marketplaces/openai-bundled` | Startup mirror used by Codex during plugin discovery. |
 | `$HOME/.codex/plugins/cache/openai-bundled/computer-use` | Official plugin cache copy repaired for local routing/runtime compatibility. |
-| `$HOME/.codex/plugins/cache/openai-bundled/chrome` | Official Chrome plugin cache copy used for Codex Chrome Extension discovery; extension/native-host setup still runs through Codex Plugins. |
+| `$HOME/.codex/plugins/cache/openai-bundled/chrome` | Official Chrome plugin cache copy used for Codex Chrome Extension discovery; the guard force-repairs local native-host, force-install, external-extension, browser-client, and Chrome-skill materialization when the normal Codex Plugins setup path leaves them incomplete. |
 | `$HOME/.codex/computer-use/` | LaunchServices runtime copy for the native Computer Use app bundle. |
 | `~/Library/LaunchAgents/io.github.codex-computer-use-foundation.guard.plist` | Fast self-healing guard at login and after local Codex/plugin/config rewrites. |
 | `~/Library/LaunchAgents/io.github.codex-computer-use-foundation.dialog-autopilot.plist` | Optional narrow dialog helper daemon. |

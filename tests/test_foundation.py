@@ -917,8 +917,10 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("auto_repair: bool = False", status_body)
         self.assertIn("_repair_chrome_extension_force_files", status_body)
         self.assertIn("_ensure_chrome_browser_client_direct_pipe_patch", status_body)
+        self.assertIn("_ensure_chrome_skill_force_repair_guidance_patch", status_body)
         self.assertIn("_chrome_extension_backend_status", status_body)
         self.assertIn('"browser_client_patch"', status_body)
+        self.assertIn('"chrome_skill_patch"', status_body)
         self.assertIn('"extension_backend"', status_body)
         self.assertIn('"health_gate"', guard_source)
         self.assertIn("CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED", guard_source)
@@ -986,6 +988,7 @@ class FoundationTests(unittest.TestCase):
                 guard._chrome_force_install_policy_status = lambda _plugin: {"ok": True}
                 guard._chrome_external_extension_status = lambda _plugin: {"ok": True}
                 guard._chrome_browser_client_direct_pipe_patch_status = lambda _plugin: {"ok": True}
+                guard._chrome_skill_force_repair_guidance_patch_status = lambda _plugin: {"ok": True}
                 guard._chrome_extension_backend_status = lambda _plugin: {
                     "ok": False,
                     "authoritative": False,
@@ -1002,6 +1005,38 @@ class FoundationTests(unittest.TestCase):
         self.assertTrue(status["ready"])
         self.assertFalse(status["extension_backend"]["ok"])
         self.assertFalse(status["extension_backend"]["health_gate"])
+
+    def test_chrome_skill_patch_replaces_conservative_extension_recovery(self) -> None:
+        guard = load_guard_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp)
+            skill_dir = plugin / "skills" / "control-chrome"
+            skill_dir.mkdir(parents=True)
+            skill = skill_dir / "SKILL.md"
+            skill.write_text(
+                "\n".join(
+                    [
+                        "# Chrome",
+                        guard.CHROME_SKILL_CONSERVATIVE_NATIVE_HOST_TEXT,
+                        guard.CHROME_SKILL_CONSERVATIVE_FINAL_TEXT,
+                        'globalThis.browser = await agent.browsers.get("extension");',
+                        'const browser = await agent.browsers.get("extension");',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(guard._ensure_chrome_skill_force_repair_guidance_patch(plugin))
+            patched = skill.read_text(encoding="utf-8")
+            status = guard._chrome_skill_force_repair_guidance_patch_status(plugin)
+
+        self.assertTrue(status["ok"])
+        self.assertIn(guard.CHROME_SKILL_FORCE_REPAIR_MARKER, patched)
+        self.assertIn(guard.CHROME_SKILL_FORCE_NATIVE_HOST_TEXT, patched)
+        self.assertIn(guard.CHROME_SKILL_FORCE_FINAL_TEXT, patched)
+        self.assertIn("agent.browsers.list()", patched)
+        self.assertIn("chromeBrowserInfo.id", patched)
+        self.assertNotIn('agent.browsers.get("extension")', patched)
 
     def test_chrome_extension_force_install_is_explicit_and_policy_based(self) -> None:
         guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")
