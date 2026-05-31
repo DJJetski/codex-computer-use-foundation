@@ -239,6 +239,14 @@ Extension installed and enabled. The primary setup path is still OpenAI's
 documented Codex Plugins flow:
 <https://developers.openai.com/codex/app/chrome-extension>.
 
+The normal guard repair paths now keep the local force files present
+idempotently once the Chrome plugin cache is healthy:
+
+```bash
+$HOME/.codex/bin/codex-computer-use-guard ensure-config
+$HOME/.codex/bin/codex-computer-use-guard ensure
+```
+
 If that setup path does not materialize the extension or native host, use the
 explicit force-install fallback:
 

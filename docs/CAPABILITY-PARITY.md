@@ -201,9 +201,10 @@ flow fails to materialize Chrome's extension/native-host state, the explicit
 write the per-user native host manifest and Chrome `ExtensionInstallForcelist`
 policy from the bundled Chrome plugin metadata. It also writes Chrome's
 documented per-user `External Extensions/<extension-id>.json` Web Store update
-file for Macs where user-default force-install policy alone is not enough. That
-fallback is never hidden inside native Computer Use health and is not part of
-normal `ensure`, because it changes Chrome extension installation state.
+file for Macs where user-default force-install policy alone is not enough.
+`ensure-config` and `ensure` keep those local force files repaired once the
+bundled Chrome plugin cache is healthy. This fallback is never counted as
+native Computer Use health.
 
 The guard also keeps the bundled in-app Browser plugin route
 `browser@openai-bundled` enabled, removes stale disabled-tool entries for the

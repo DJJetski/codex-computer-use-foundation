@@ -2166,6 +2166,43 @@ def _write_chrome_native_host_manifest(plugin: Path) -> dict[str, Any]:
     }
 
 
+def _repair_chrome_extension_force_files(plugin: Path) -> dict[str, Any]:
+    manifest_install = _write_chrome_native_host_manifest(plugin)
+    policy_write: dict[str, Any]
+    policy_after: dict[str, Any]
+    external_write: dict[str, Any]
+    external_after: dict[str, Any]
+    if manifest_install.get("ok"):
+        extension_id = str(manifest_install["extension_id"])
+        external_write = _write_chrome_external_extension_file(extension_id)
+        wanted_item = _chrome_force_install_item(extension_id)
+        existing_items = _read_chrome_extension_forcelist()
+        preserved_items = [item for item in existing_items if not item.startswith(f"{extension_id};")]
+        desired_items = preserved_items + [wanted_item]
+        policy_write = _write_chrome_extension_forcelist(desired_items)
+        policy_after = _chrome_force_install_policy_status(plugin)
+        external_after = _chrome_external_extension_status(plugin)
+    else:
+        policy_write = {"ok": False, "error": "native host manifest install failed"}
+        policy_after = _chrome_force_install_policy_status(plugin)
+        external_write = {"ok": False, "error": "native host manifest install failed"}
+        external_after = _chrome_external_extension_status(plugin)
+    ok = bool(
+        manifest_install.get("ok")
+        and (policy_write.get("ok") or external_after.get("ok"))
+        and external_after.get("ok")
+    )
+    return {
+        "ok": ok,
+        "changed": bool(manifest_install.get("ok") or policy_write.get("ok") or external_write.get("ok")),
+        "manifest_install": manifest_install,
+        "policy_write": policy_write,
+        "policy_after": policy_after,
+        "external_write": external_write,
+        "external_after": external_after,
+    }
+
+
 def chrome_extension_force_install(*, yes: bool = False) -> dict[str, Any]:
     chrome_version, active_plugin_root, cache_ok = _installed_chrome_plugin_root()
     marketplace_ok = _chrome_plugin_marketplace_ok()
@@ -2203,26 +2240,12 @@ def chrome_extension_force_install(*, yes: bool = False) -> dict[str, Any]:
             "plugin_root": str(active_plugin_root),
         }
 
-    manifest_install = _write_chrome_native_host_manifest(active_plugin_root)
-    policy_write: dict[str, Any]
-    policy_after: dict[str, Any]
-    external_write: dict[str, Any]
-    external_after: dict[str, Any]
-    if manifest_install.get("ok"):
-        extension_id = str(manifest_install["extension_id"])
-        external_write = _write_chrome_external_extension_file(extension_id)
-        wanted_item = _chrome_force_install_item(extension_id)
-        existing_items = _read_chrome_extension_forcelist()
-        preserved_items = [item for item in existing_items if not item.startswith(f"{extension_id};")]
-        desired_items = preserved_items + [wanted_item]
-        policy_write = _write_chrome_extension_forcelist(desired_items)
-        policy_after = _chrome_force_install_policy_status(active_plugin_root)
-        external_after = _chrome_external_extension_status(active_plugin_root)
-    else:
-        policy_write = {"ok": False, "error": "native host manifest install failed"}
-        policy_after = policy_before
-        external_write = {"ok": False, "error": "native host manifest install failed"}
-        external_after = external_before
+    repair = _repair_chrome_extension_force_files(active_plugin_root)
+    manifest_install = repair["manifest_install"]
+    policy_write = repair["policy_write"]
+    policy_after = repair["policy_after"]
+    external_write = repair["external_write"]
+    external_after = repair["external_after"]
     after = chrome_plugin_status()
     install_request_ok = bool(policy_write.get("ok") or external_after.get("ok"))
     ok = bool(manifest_install.get("ok") and install_request_ok and after.get("native_host", {}).get("ok"))
@@ -2249,7 +2272,7 @@ def chrome_extension_force_install(*, yes: bool = False) -> dict[str, Any]:
     }
 
 
-def chrome_plugin_status() -> dict[str, Any]:
+def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
     config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""
     plugin_enabled = bool(
         re.search(r'\[plugins\."chrome@openai-bundled"\]\s+enabled\s*=\s*true', config_text)
@@ -2274,6 +2297,20 @@ def chrome_plugin_status() -> dict[str, Any]:
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
     }
+    auto_repair_result: dict[str, Any] = {"attempted": False}
+    if (
+        auto_repair
+        and marketplace_ok
+        and cache_ok
+        and plugin_copy_ok
+        and plugin_enabled
+        and not disabled
+        and (not native_host.get("ok") or not force_install_policy.get("ok") or not external_extension.get("ok"))
+    ):
+        auto_repair_result = {"attempted": True, **_repair_chrome_extension_force_files(active_plugin_root)}
+        native_host = _run_chrome_plugin_check("check-native-host-manifest.js", plugin=active_plugin_root)
+        force_install_policy = _chrome_force_install_policy_status(active_plugin_root)
+        external_extension = _chrome_external_extension_status(active_plugin_root)
     chrome_running = _run_chrome_plugin_check("chrome-is-running.js", plugin=active_plugin_root, timeout=5) if plugin_copy_ok else {
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
@@ -2306,6 +2343,7 @@ def chrome_plugin_status() -> dict[str, Any]:
         "extension": extension,
         "force_install_policy": force_install_policy,
         "external_extension": external_extension,
+        "auto_repair": auto_repair_result,
         "chrome_running": chrome_running,
         "next_step": next_step,
     }
@@ -4177,7 +4215,7 @@ def ensure() -> dict[str, Any]:
     service_ready = _service_running(service_binary) or bool(appdata_privacy.get("ok"))
     direct_mcp_absence = _direct_mcp_absence_status(config_text)
     ownership = mcp_client_ownership_status()
-    chrome_plugin = chrome_plugin_status()
+    chrome_plugin = chrome_plugin_status(auto_repair=True)
     browser_plugin = browser_plugin_status()
     configured = (
         launch_agent_loaded
@@ -4629,7 +4667,7 @@ def main(argv: list[str]) -> int:
         elif command in {"run-chrome-smoke", "fresh-chrome-smoke", "chrome-smoke"}:
             payload = _run_chrome_smoke()
         elif command in {"chrome-plugin-status", "chrome-extension-status"}:
-            payload = chrome_plugin_status()
+            payload = chrome_plugin_status(auto_repair="--repair" in argv or "--ensure" in argv)
         elif command in {"chrome-extension-force-install", "force-install-chrome-extension"}:
             payload = chrome_extension_force_install(yes="--yes" in argv)
         elif command in {"browser-plugin-status", "browser-status"}:
@@ -4716,7 +4754,7 @@ def main(argv: list[str]) -> int:
             )
             native_smoke = _native_smoke_status()
             chrome_smoke = _chrome_smoke_status()
-            chrome_plugin = chrome_plugin_status()
+            chrome_plugin = chrome_plugin_status(auto_repair=True)
             browser_plugin = browser_plugin_status()
             ownership = mcp_client_ownership_status()
             runtime_ready = (

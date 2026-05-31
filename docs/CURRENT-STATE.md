@@ -138,8 +138,11 @@ Expected high-level result:
   fallback writes the per-user Chrome native host manifest and adds the Codex
   Chrome Extension to Chrome's `ExtensionInstallForcelist` policy plus Chrome's
   documented per-user `External Extensions/<extension-id>.json` Web Store update
-  file. That fallback is separate from normal `ensure` and from native Computer
-  Use smoke health.
+  file. `ensure-config` and `ensure` now keep those local force files repaired
+  idempotently once the bundled Chrome plugin cache is healthy, while
+  `chrome-plugin-status` remains the diagnostic view unless invoked with
+  `--repair` or `--ensure`. This lane remains separate from native Computer Use
+  smoke health.
 - The official in-app Browser plugin route is reported separately as
   `browser_plugin` and can be checked with
   `$HOME/.codex/bin/codex-computer-use-guard browser-plugin-status`. The guard
