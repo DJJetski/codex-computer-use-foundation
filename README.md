@@ -234,13 +234,15 @@ $HOME/.codex/bin/codex-computer-use-guard chrome-plugin-status
 
 This checks that the bundled `chrome@openai-bundled` plugin is enabled, the
 local marketplace mirror contains the Chrome plugin, the Chrome native host
-manifest is present, and the active Chrome profile has the Codex Chrome
-Extension installed and enabled. The primary setup path is still OpenAI's
-documented Codex Plugins flow:
+manifest is present, the active Chrome profile has the Codex Chrome Extension
+installed and enabled, and the bundled Chrome browser-client can keep the
+extension backend in its Browser Use list. The primary setup path is still
+OpenAI's documented Codex Plugins flow:
 <https://developers.openai.com/codex/app/chrome-extension>.
 
-The normal guard repair paths now keep the local force files present
-idempotently once the Chrome plugin cache is healthy:
+The normal guard repair paths now keep the local force files present and patch
+the bundled Chrome browser-client idempotently once the Chrome plugin cache is
+healthy:
 
 ```bash
 $HOME/.codex/bin/codex-computer-use-guard ensure-config
@@ -257,9 +259,12 @@ $HOME/.codex/bin/codex-computer-use-guard chrome-extension-force-install --yes
 That command writes the per-user Chrome native-messaging host manifest for the
 bundled Codex Chrome plugin, adds the Codex Chrome Extension to Chrome's
 `ExtensionInstallForcelist` policy, and writes Chrome's documented per-user
-`External Extensions/<extension-id>.json` Web Store update file. Restart Chrome
-afterward, confirm the extension shows Connected, and start a fresh Codex
-thread.
+`External Extensions/<extension-id>.json` Web Store update file. If a thread
+still reports `Browser is not available: extension` after those files are
+present, rerun `ensure-config` or `chrome-plugin-status --repair`; the guard
+restores the browser-client socket path without replacing the official Chrome
+Browser Use API. Restart Chrome afterward, confirm the extension shows
+Connected, and start a fresh Codex thread.
 
 The bundled in-app Browser plugin route is also kept enabled:
 

@@ -203,8 +203,10 @@ policy from the bundled Chrome plugin metadata. It also writes Chrome's
 documented per-user `External Extensions/<extension-id>.json` Web Store update
 file for Macs where user-default force-install policy alone is not enough.
 `ensure-config` and `ensure` keep those local force files repaired once the
-bundled Chrome plugin cache is healthy. This fallback is never counted as
-native Computer Use health.
+bundled Chrome plugin cache is healthy, and also patch the bundled Chrome
+browser-client so `type="extension"` remains discoverable through the original
+Browser Use API. This preserves Chrome Use capabilities such as existing-tab
+access without counting the route as native Computer Use health.
 
 The guard also keeps the bundled in-app Browser plugin route
 `browser@openai-bundled` enabled, removes stale disabled-tool entries for the

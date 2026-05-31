@@ -119,6 +119,11 @@ Responsibilities:
   and `ensure` may repair Chrome native-messaging, `ExtensionInstallForcelist`,
   and per-user `External Extensions` state once the bundled Chrome plugin cache
   is healthy.
+- Patch the bundled Chrome browser-client cache copy so the official Browser
+  Use API can connect to `/tmp/codex-browser-use` directly and keeps
+  `type="extension"` backends in its list. This preserves the official Chrome
+  plugin API surface; it is not a hidden AppleScript, Playwright, or GUI
+  fallback.
 - Remove `tool_suggest.disabled_tools` entries for
   `computer-use@openai-bundled` and `chrome@openai-bundled`.
 - Keep marketplace mirrors patched so plugin loading uses the local native

@@ -916,6 +916,13 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("chrome-is-running.js", status_body)
         self.assertIn("auto_repair: bool = False", status_body)
         self.assertIn("_repair_chrome_extension_force_files", status_body)
+        self.assertIn("_ensure_chrome_browser_client_direct_pipe_patch", status_body)
+        self.assertIn("_chrome_extension_backend_status", status_body)
+        self.assertIn('"browser_client_patch"', status_body)
+        self.assertIn('"extension_backend"', status_body)
+        self.assertIn('"health_gate"', guard_source)
+        self.assertIn("CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED", guard_source)
+        self.assertIn("CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED", guard_source)
         self.assertIn('"auto_repair"', status_body)
         self.assertIn("chrome-extension-force-install --yes", status_body)
         self.assertNotIn("installManifest.mjs", status_body)
@@ -923,6 +930,78 @@ class FoundationTests(unittest.TestCase):
         self.assertIn('plugin_name == "browser" and not _generic_plugin_copy_ok(dest_plugin, "browser")', guard_source)
         self.assertIn("chrome_plugin_status(auto_repair=True)", guard_source)
         self.assertIn('chrome_plugin_status(auto_repair="--repair" in argv or "--ensure" in argv)', guard_source)
+
+    def test_chrome_browser_client_patch_materializes_extension_backend_route(self) -> None:
+        guard = load_guard_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp)
+            scripts = plugin / "scripts"
+            scripts.mkdir()
+            browser_client = scripts / "browser-client.mjs"
+            browser_client.write_text(
+                guard.CHROME_BROWSER_CLIENT_NATIVE_PIPE_ORIGINAL
+                + "\n"
+                + guard.CHROME_BROWSER_CLIENT_EXTENSION_FILTER_ORIGINAL,
+                encoding="utf-8",
+            )
+
+            self.assertTrue(guard._ensure_chrome_browser_client_direct_pipe_patch(plugin))
+            patched = browser_client.read_text(encoding="utf-8")
+
+        self.assertIn(guard.CHROME_BROWSER_CLIENT_NATIVE_PIPE_IMPORT, patched)
+        self.assertIn(guard.CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED, patched)
+        self.assertIn(guard.CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED, patched)
+        self.assertNotIn(guard.CHROME_BROWSER_CLIENT_NATIVE_PIPE_ORIGINAL, patched)
+        self.assertNotIn(guard.CHROME_BROWSER_CLIENT_EXTENSION_FILTER_ORIGINAL, patched)
+
+    def test_chrome_plugin_status_does_not_gate_on_non_authoritative_socket_probe(self) -> None:
+        guard = load_guard_module()
+        originals = {
+            "CONFIG": guard.CONFIG,
+            "_installed_chrome_plugin_root": guard._installed_chrome_plugin_root,
+            "_chrome_plugin_marketplace_ok": guard._chrome_plugin_marketplace_ok,
+            "_chrome_plugin_copy_ok": guard._chrome_plugin_copy_ok,
+            "_run_chrome_plugin_check": guard._run_chrome_plugin_check,
+            "_chrome_force_install_policy_status": guard._chrome_force_install_policy_status,
+            "_chrome_external_extension_status": guard._chrome_external_extension_status,
+            "_chrome_browser_client_direct_pipe_patch_status": guard._chrome_browser_client_direct_pipe_patch_status,
+            "_chrome_extension_backend_status": guard._chrome_extension_backend_status,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp) / "chrome"
+            plugin.mkdir()
+            config = Path(tmp) / "config.toml"
+            config.write_text('[plugins."chrome@openai-bundled"]\nenabled = true\n', encoding="utf-8")
+            try:
+                guard.CONFIG = config
+                guard._installed_chrome_plugin_root = lambda: ("26.test", plugin, True)
+                guard._chrome_plugin_marketplace_ok = lambda: True
+                guard._chrome_plugin_copy_ok = lambda _plugin: True
+                guard._run_chrome_plugin_check = lambda script_name, **_kwargs: {
+                    "ok": True,
+                    "running": script_name == "chrome-is-running.js",
+                    "installed": script_name == "check-extension-installed.js",
+                    "enabled": script_name == "check-extension-installed.js",
+                }
+                guard._chrome_force_install_policy_status = lambda _plugin: {"ok": True}
+                guard._chrome_external_extension_status = lambda _plugin: {"ok": True}
+                guard._chrome_browser_client_direct_pipe_patch_status = lambda _plugin: {"ok": True}
+                guard._chrome_extension_backend_status = lambda _plugin: {
+                    "ok": False,
+                    "authoritative": False,
+                    "health_gate": False,
+                    "error": "guard subprocess timeout",
+                }
+
+                status = guard.chrome_plugin_status(auto_repair=False)
+            finally:
+                for name, value in originals.items():
+                    setattr(guard, name, value)
+
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["ready"])
+        self.assertFalse(status["extension_backend"]["ok"])
+        self.assertFalse(status["extension_backend"]["health_gate"])
 
     def test_chrome_extension_force_install_is_explicit_and_policy_based(self) -> None:
         guard_source = repo_path("src/bin/codex-computer-use-guard").read_text(encoding="utf-8")

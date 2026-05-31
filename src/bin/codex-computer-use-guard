@@ -114,6 +114,7 @@ CHROME_NATIVE_HOST_MANIFEST_DIR = HOME / "Library" / "Application Support" / "Go
 CHROME_EXTERNAL_EXTENSIONS_DIR = HOME / "Library" / "Application Support" / "Google" / "Chrome" / "External Extensions"
 CHROME_POLICY_PLIST = HOME / "Library" / "Preferences" / "com.google.Chrome.plist"
 CHROME_WEB_STORE_UPDATE_URL = "https://clients2.google.com/service/update2/crx"
+BROWSER_USE_PIPE_DIR = Path("/tmp/codex-browser-use")
 RUNTIME_BASE = CODEX_HOME / "computer-use"
 RUNTIME_APP = RUNTIME_BASE / "Codex Computer Use.app"
 SIGNED_MARKETPLACE_APP = PATCHED_BUNDLED_MARKETPLACE / "plugins" / "computer-use" / "Codex Computer Use.app"
@@ -1922,6 +1923,7 @@ def ensure_chrome_cache() -> tuple[str, Path, bool]:
     if not _chrome_cache_valid(dest, version):
         _copy_cache(CHROME_SOURCE, dest)
         changed = True
+    changed = _ensure_chrome_browser_client_direct_pipe_patch(dest) or changed
     return version, dest, changed
 
 
@@ -1955,6 +1957,284 @@ def _chrome_plugin_node(plugin: Path) -> Path:
     if plugin_node.is_file():
         return plugin_node
     return OPENAI_CODEX_APP / "Contents" / "Resources" / "node"
+
+
+CHROME_BROWSER_CLIENT_NATIVE_PIPE_IMPORT = (
+    'import{createConnection as __codexChromeDirectPipeCreateConnection}from"node:net";\n'
+)
+CHROME_BROWSER_CLIENT_NATIVE_PIPE_ORIGINAL = (
+    "function mh(){let e=globalThis.nodeRepl?.nativePipe;"
+    'return e==null||typeof e.createConnection!="function"?null:e}'
+)
+CHROME_BROWSER_CLIENT_NATIVE_PIPE_LEGACY_PATCHED = (
+    "function mh(){let e=globalThis.nodeRepl?.nativePipe;"
+    'if(e!=null&&typeof e.createConnection=="function")return e;'
+    "return{createConnection:async t=>__codexChromeDirectPipeCreateConnection(t)}}"
+)
+CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED = (
+    "function mh(){return{createConnection:async t=>__codexChromeDirectPipeCreateConnection(t)}}"
+)
+CHROME_BROWSER_CLIENT_EXTENSION_FILTER_ORIGINAL = (
+    "for(let n of e)_h(Il(n.info.type))?t.push(n):r.push(n);"
+)
+CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED = (
+    'for(let n of e)(n.info?.type==="extension"||_h(Il(n.info.type)))?t.push(n):r.push(n);'
+)
+
+
+def _chrome_browser_client_path(plugin: Path) -> Path:
+    return plugin / "scripts" / "browser-client.mjs"
+
+
+def _chrome_browser_client_direct_pipe_patch_status(plugin: Path) -> dict[str, Any]:
+    browser_client = _chrome_browser_client_path(plugin)
+    if not browser_client.is_file():
+        return {
+            "ok": False,
+            "patched": False,
+            "browser_client": str(browser_client),
+            "error": "missing Chrome browser client",
+        }
+    try:
+        source = browser_client.read_text(encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "patched": False,
+            "browser_client": str(browser_client),
+            "error": f"could not read Chrome browser client: {exc}",
+        }
+    patched = (
+        CHROME_BROWSER_CLIENT_NATIVE_PIPE_IMPORT in source
+        and CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED in source
+        and CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED in source
+    )
+    original_present = CHROME_BROWSER_CLIENT_NATIVE_PIPE_ORIGINAL in source
+    legacy_patch_present = CHROME_BROWSER_CLIENT_NATIVE_PIPE_LEGACY_PATCHED in source
+    return {
+        "ok": patched,
+        "patched": patched,
+        "original_present": original_present,
+        "legacy_patch_present": legacy_patch_present,
+        "browser_client": str(browser_client),
+        "reason": "" if patched else "direct native-pipe fallback missing from Chrome browser client",
+    }
+
+
+def _ensure_chrome_browser_client_direct_pipe_patch(plugin: Path) -> bool:
+    """Keep Chrome's original browser-client API usable when Codex nativePipe is absent."""
+    browser_client = _chrome_browser_client_path(plugin)
+    if not browser_client.is_file():
+        return False
+    source = browser_client.read_text(encoding="utf-8")
+    if (
+        CHROME_BROWSER_CLIENT_NATIVE_PIPE_IMPORT in source
+        and CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED in source
+        and CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED in source
+    ):
+        return False
+    replace_target = (
+        CHROME_BROWSER_CLIENT_NATIVE_PIPE_ORIGINAL
+        if CHROME_BROWSER_CLIENT_NATIVE_PIPE_ORIGINAL in source
+        else CHROME_BROWSER_CLIENT_NATIVE_PIPE_LEGACY_PATCHED
+        if CHROME_BROWSER_CLIENT_NATIVE_PIPE_LEGACY_PATCHED in source
+        else ""
+    )
+    if not replace_target:
+        updated = source
+    else:
+        updated = source.replace(replace_target, CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED, 1)
+    if CHROME_BROWSER_CLIENT_NATIVE_PIPE_IMPORT not in updated:
+        updated = CHROME_BROWSER_CLIENT_NATIVE_PIPE_IMPORT + updated
+    if CHROME_BROWSER_CLIENT_EXTENSION_FILTER_ORIGINAL in updated:
+        updated = updated.replace(
+            CHROME_BROWSER_CLIENT_EXTENSION_FILTER_ORIGINAL,
+            CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED,
+            1,
+        )
+    if CHROME_BROWSER_CLIENT_NATIVE_PIPE_PATCHED not in updated or CHROME_BROWSER_CLIENT_EXTENSION_FILTER_PATCHED not in updated:
+        return False
+    tmp = browser_client.with_name(browser_client.name + f".tmp-{os.getpid()}")
+    tmp.write_text(updated, encoding="utf-8")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, browser_client)
+    return True
+
+
+def _chrome_extension_backend_status(plugin: Path) -> dict[str, Any]:
+    try:
+        extension_id = _chrome_extension_config(plugin)["extension_id"]
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "pipe_dir": str(BROWSER_USE_PIPE_DIR)}
+    if platform.system() != "Darwin":
+        return {
+            "ok": False,
+            "supported": False,
+            "extension_id": extension_id,
+            "pipe_dir": str(BROWSER_USE_PIPE_DIR),
+            "error": "Chrome extension backend socket probe is currently macOS-only.",
+        }
+    node = _chrome_plugin_node(plugin)
+    if not node.is_file():
+        return {
+            "ok": False,
+            "supported": True,
+            "extension_id": extension_id,
+            "pipe_dir": str(BROWSER_USE_PIPE_DIR),
+            "error": f"missing Codex Node runtime: {node}",
+        }
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const net = require("net");
+const dir = process.argv[1];
+const expectedExtensionId = process.argv[2];
+function frame(obj) {
+  const body = Buffer.from(JSON.stringify(obj));
+  const out = Buffer.alloc(4 + body.length);
+  out.writeUInt32LE(body.length, 0);
+  body.copy(out, 4);
+  return out;
+}
+function decoder() {
+  let buf = Buffer.alloc(0);
+  return (chunk) => {
+    buf = Buffer.concat([buf, Buffer.from(chunk)]);
+    const out = [];
+    while (buf.length >= 4) {
+      const length = buf.readUInt32LE(0);
+      if (buf.length < 4 + length) break;
+      out.push(JSON.parse(buf.subarray(4, 4 + length).toString("utf8")));
+      buf = buf.subarray(4 + length);
+    }
+    return out;
+  };
+}
+function requestInfo(socketPath) {
+  return new Promise((resolve) => {
+    const client = net.createConnection(socketPath);
+    const decode = decoder();
+    const id = Math.floor(Math.random() * 1e9);
+    const timer = setTimeout(() => {
+      client.destroy();
+      resolve({ timeout: true });
+    }, 1500);
+    client.on("connect", () => {
+      client.write(frame({ jsonrpc: "2.0", method: "getInfo", params: {}, id }));
+    });
+    client.on("data", (data) => {
+      for (const message of decode(data)) {
+        if (message.id === id) {
+          clearTimeout(timer);
+          client.end();
+          resolve(message);
+        }
+      }
+    });
+    client.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ error: error.message, code: error.code || "" });
+    });
+  });
+}
+(async () => {
+  if (!fs.existsSync(dir)) {
+    console.log(JSON.stringify({
+      ok: false,
+      supported: true,
+      extension_id: expectedExtensionId,
+      pipe_dir: dir,
+      candidate_count: 0,
+      extension_backend_count: 0,
+      matching_extension_backend_count: 0,
+      extension_backends: [],
+      failures: [],
+      error: "Browser Use pipe directory is missing.",
+    }));
+    return;
+  }
+  const candidates = fs.readdirSync(dir)
+    .map((name) => path.join(dir, name))
+    .filter((item) => {
+      try { return fs.statSync(item).isSocket(); }
+      catch { return false; }
+    })
+    .sort();
+  const failures = [];
+  const extensionBackends = [];
+  for (const socketPath of candidates) {
+    const response = await requestInfo(socketPath);
+    const result = response && typeof response === "object" ? response.result : null;
+    if (!result || typeof result !== "object") {
+      failures.push({
+        socket: path.basename(socketPath),
+        error: response && response.error ? String(response.error) : JSON.stringify(response),
+      });
+      continue;
+    }
+    const metadata = result.metadata && typeof result.metadata === "object" ? result.metadata : {};
+    if (result.type !== "extension") continue;
+    const backendExtensionId = typeof metadata.extensionId === "string" ? metadata.extensionId : "";
+    extensionBackends.push({
+      socket: path.basename(socketPath),
+      name: typeof result.name === "string" ? result.name : "",
+      type: "extension",
+      version: typeof result.version === "string" ? result.version : "",
+      extension_id: backendExtensionId,
+      extension_id_matches: backendExtensionId === expectedExtensionId,
+      extension_instance_id_present: typeof metadata.extensionInstanceId === "string" && metadata.extensionInstanceId.length > 0,
+    });
+  }
+  const matching = extensionBackends.filter((backend) => backend.extension_id_matches);
+  console.log(JSON.stringify({
+    ok: matching.length > 0,
+    supported: true,
+    extension_id: expectedExtensionId,
+    pipe_dir: dir,
+    candidate_count: candidates.length,
+    extension_backend_count: extensionBackends.length,
+    matching_extension_backend_count: matching.length,
+    extension_backends: extensionBackends,
+    failures: failures.slice(0, 8),
+    error: matching.length > 0 ? "" : "No reachable Browser Use extension backend matched the Codex Chrome Extension.",
+  }));
+})().catch((error) => {
+  console.log(JSON.stringify({
+    ok: false,
+    supported: true,
+    extension_id: expectedExtensionId,
+    pipe_dir: dir,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+});
+"""
+    try:
+        result = _run_capture([str(node), "-e", script, str(BROWSER_USE_PIPE_DIR), extension_id], timeout=10)
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "authoritative": False,
+            "health_gate": False,
+            "supported": True,
+            "extension_id": extension_id,
+            "pipe_dir": str(BROWSER_USE_PIPE_DIR),
+            "error": "Chrome extension backend socket probe timed out from the guard subprocess.",
+        }
+    try:
+        parsed = json.loads(result.stdout)
+        payload = parsed if isinstance(parsed, dict) else {"output": parsed}
+    except Exception:
+        payload = {"ok": False, "error": result.stdout.strip()}
+    payload.setdefault("ok", result.returncode == 0 and bool(payload.get("ok")))
+    payload.setdefault("authoritative", False)
+    payload.setdefault("health_gate", False)
+    payload.setdefault("supported", True)
+    payload.setdefault("extension_id", extension_id)
+    payload.setdefault("pipe_dir", str(BROWSER_USE_PIPE_DIR))
+    if result.returncode != 0:
+        payload["ok"] = False
+        payload.setdefault("error", "\n".join(result.stdout.rstrip().splitlines()[-6:]))
+    return payload
 
 
 def _run_chrome_plugin_check(script_name: str, *, plugin: Path, timeout: int = 10) -> dict[str, Any]:
@@ -2297,6 +2577,10 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
     }
+    browser_client_patch = _chrome_browser_client_direct_pipe_patch_status(active_plugin_root) if plugin_copy_ok else {
+        "ok": False,
+        "error": "Chrome plugin copy is missing or incomplete",
+    }
     auto_repair_result: dict[str, Any] = {"attempted": False}
     if (
         auto_repair
@@ -2305,17 +2589,47 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         and plugin_copy_ok
         and plugin_enabled
         and not disabled
-        and (not native_host.get("ok") or not force_install_policy.get("ok") or not external_extension.get("ok"))
+        and (
+            not native_host.get("ok")
+            or not force_install_policy.get("ok")
+            or not external_extension.get("ok")
+            or not browser_client_patch.get("ok")
+        )
     ):
-        auto_repair_result = {"attempted": True, **_repair_chrome_extension_force_files(active_plugin_root)}
+        patch_changed = _ensure_chrome_browser_client_direct_pipe_patch(active_plugin_root)
+        auto_repair_result = {
+            "attempted": True,
+            **_repair_chrome_extension_force_files(active_plugin_root),
+            "browser_client_patch_changed": patch_changed,
+        }
         native_host = _run_chrome_plugin_check("check-native-host-manifest.js", plugin=active_plugin_root)
         force_install_policy = _chrome_force_install_policy_status(active_plugin_root)
         external_extension = _chrome_external_extension_status(active_plugin_root)
+        browser_client_patch = _chrome_browser_client_direct_pipe_patch_status(active_plugin_root)
     chrome_running = _run_chrome_plugin_check("chrome-is-running.js", plugin=active_plugin_root, timeout=5) if plugin_copy_ok else {
         "ok": False,
         "error": "Chrome plugin copy is missing or incomplete",
     }
-    ready = bool(plugin_enabled and not disabled and marketplace_ok and cache_ok and native_host.get("ok") and extension.get("ok"))
+    extension_backend = (
+        _chrome_extension_backend_status(active_plugin_root)
+        if plugin_copy_ok and chrome_running.get("ok")
+        else {
+            "ok": False,
+            "error": "Google Chrome is not running or Chrome plugin copy is incomplete.",
+        }
+    )
+    ready = bool(
+        plugin_enabled
+        and not disabled
+        and marketplace_ok
+        and cache_ok
+        and native_host.get("ok")
+        and extension.get("ok")
+        and force_install_policy.get("ok")
+        and external_extension.get("ok")
+        and chrome_running.get("ok")
+        and browser_client_patch.get("ok")
+    )
     next_step = ""
     if not marketplace_ok:
         next_step = "Run codex-computer-use-guard ensure-config to refresh the bundled Chrome plugin mirror."
@@ -2327,6 +2641,12 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         next_step = "Remove and re-add the Chrome plugin from Codex Plugins, or run codex-computer-use-guard chrome-extension-force-install --yes."
     elif not extension.get("ok"):
         next_step = "Install and enable the Codex Chrome Extension in the active Chrome profile, or run codex-computer-use-guard chrome-extension-force-install --yes."
+    elif not force_install_policy.get("ok"):
+        next_step = "Run codex-computer-use-guard chrome-extension-force-install --yes to restore Chrome's managed force-install policy."
+    elif not external_extension.get("ok"):
+        next_step = "Run codex-computer-use-guard chrome-extension-force-install --yes to restore Chrome's external extension install file."
+    elif not browser_client_patch.get("ok"):
+        next_step = "Run codex-computer-use-guard ensure-config to patch the Chrome browser-client native-pipe fallback."
     elif not chrome_running.get("ok"):
         next_step = "Open Google Chrome before starting an extension-backed Chrome task."
     return {
@@ -2343,6 +2663,8 @@ def chrome_plugin_status(*, auto_repair: bool = False) -> dict[str, Any]:
         "extension": extension,
         "force_install_policy": force_install_policy,
         "external_extension": external_extension,
+        "browser_client_patch": browser_client_patch,
+        "extension_backend": extension_backend,
         "auto_repair": auto_repair_result,
         "chrome_running": chrome_running,
         "next_step": next_step,
@@ -2453,6 +2775,8 @@ def _mirror_bundled_marketplace(source: Path, dest: Path, *, patch_computer_use:
             if patch_computer_use:
                 changed = ensure_plugin_local_mcp_wrapper(dest_plugin) or changed
             changed = ensure_plugin_skill_suppressed(dest_plugin) or changed
+        if plugin_name == "chrome" and dest_plugin.is_dir():
+            changed = _ensure_chrome_browser_client_direct_pipe_patch(dest_plugin) or changed
     return changed
 
 
