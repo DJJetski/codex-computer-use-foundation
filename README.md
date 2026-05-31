@@ -108,7 +108,7 @@ People usually find this project while searching for:
 | Schema repair | Rebuilds local Computer Use plugin/runtime materialization from the installed Codex bundle when `tools/list` exposes a broken or partial native schema, then probes again before failing closed. |
 | Persistence | Installs a user LaunchAgent and bootstrap backup so structural repair runs after Codex rewrites, Codex restarts, and Mac reboots. |
 | Verification | Requires the full native MCP tool surface, expected tool argument contract, and fresh native smoke evidence before reporting full operational health. |
-| Browser routes | Keeps the official bundled Chrome and Browser plugin routes enabled and unsuppressed, while reporting them separately from native Computer Use health. |
+| Browser routes | Keeps the official bundled Chrome and Browser plugin routes enabled, unsuppressed, and complete enough to expose their Browser Use client entrypoints, while reporting them separately from native Computer Use health. |
 | Boundaries | Keeps fallback automation separate from native Computer Use success. |
 
 ## What It Does Not Do
@@ -285,6 +285,10 @@ The bundled in-app Browser plugin route is also kept enabled:
 ```bash
 $HOME/.codex/bin/codex-computer-use-guard browser-plugin-status
 ```
+
+That check now fails closed if the cached Browser plugin is missing the
+`scripts/browser-client.mjs` entrypoint or its Browser skill file, because those
+files are required for the official in-app Browser Use workflow.
 
 Browser and Chrome plugin readiness is reported separately; neither route is
 counted as native Computer Use success or as a fallback replacement for the

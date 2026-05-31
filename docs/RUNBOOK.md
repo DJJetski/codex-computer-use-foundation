@@ -228,6 +228,33 @@ string `extension`.
 health gate, because the real Codex Node REPL/Browser Use context can reach
 extension sockets that the guard subprocess may time out on.
 
+## In-App Browser Plugin Status
+
+Use this when a task needs the official in-app Browser Use path:
+
+```bash
+~/.codex/bin/codex-computer-use-guard browser-plugin-status | jq '{ok,failure_class,enabled,disabled,legacy_disabled,cache_valid,source_contract:{ok,missing},cache_contract:{ok,missing}}'
+```
+
+Expected for the local Browser Use route:
+
+- `ok=true`
+- `enabled=true`
+- `disabled=false`
+- `legacy_disabled=false`
+- `source_contract.ok=true`
+- `cache_contract.ok=true`
+- both `missing` lists are empty
+
+This proves the bundled Browser plugin is enabled, unsuppressed, and has the
+Browser Use client entrypoint and skill file. It does not prove the already-open
+Codex thread has a live browser webview handle. If an active Browser Use task
+times out while waiting for the in-app browser webview to attach, reset the
+Browser control session once and retry. If the same thread still times out while
+`browser-plugin-status.ok=true`, start a fresh Codex thread or restart Codex;
+do not treat Computer Use, Playwright, Chrome Extension status, or another
+browser surface as proof that in-app Browser Use is healthy.
+
 ## Preflight For A Planned GUI Task
 
 ```bash

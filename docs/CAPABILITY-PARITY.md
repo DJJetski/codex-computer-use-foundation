@@ -216,10 +216,11 @@ the route as native Computer Use health.
 The guard also keeps the bundled in-app Browser plugin route
 `browser@openai-bundled` enabled, removes stale disabled-tool entries for the
 legacy `browser-use@openai-bundled` id, caches the official Browser plugin
-copy, and reports this route separately as `browser_plugin` through
-`codex-computer-use-guard browser-plugin-status`. Browser plugin health is not
-native Computer Use health and must not be used as fallback evidence for
-`ok=true`.
+copy, verifies that the cached copy still contains the `scripts/browser-client.mjs`
+entrypoint and Browser skill file, and reports this route separately as
+`browser_plugin` through `codex-computer-use-guard browser-plugin-status`.
+Browser plugin health is not native Computer Use health and must not be used as
+fallback evidence for `ok=true`.
 
 The smoke does not claim arbitrary control of minimized windows, off-Space
 windows, invisible windows, Terminal, Codex itself, administrator prompts, or

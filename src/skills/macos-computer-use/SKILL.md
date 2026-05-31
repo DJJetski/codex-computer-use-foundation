@@ -227,6 +227,10 @@ The guard must keep all of these true:
   and unsuppressed when their bundled plugin copies are present, because
   authenticated Chrome Browser Use and in-app Browser Use are separate
   official routes that must survive Codex restarts and plugin-cache rewrites
+- the cached in-app Browser plugin remains complete enough for the official
+  Browser Use workflow, including `scripts/browser-client.mjs` and the Browser
+  skill file; an incomplete Browser cache must be treated as invalid and
+  recopied by the guard
 - no `tool_suggest.disabled_tools` entry for `computer-use@openai-bundled`
 - the app-bundled marketplace is mirrored into the stable local source
   `~/.codex/plugins/marketplaces/openai-bundled`, and
@@ -374,6 +378,16 @@ false when the real Codex Node REPL context can connect successfully. The
 authoritative Chrome proof is a Browser Use setup in the active Codex context
 where `agent.browsers.list()` returns a `type="extension"` Chrome backend and
 `browser.user.openTabs()` succeeds.
+
+For in-app Browser Use, `browser-plugin-status.ok=true` now proves the bundled
+Browser route is enabled, unsuppressed, and has the cached Browser client
+entrypoint and skill file. The active-session proof is still a Browser Use setup
+in the current Codex context, usually against the `iab` backend. If the active
+Browser Use task times out waiting for the in-app browser webview to attach,
+reset the Browser control session once and retry; if the same thread still
+times out while `browser-plugin-status.ok=true`, treat the current thread or app
+webview handle as stale and use a fresh Codex thread or Codex restart rather
+than switching to Computer Use or another browser surface as proof.
 
 ## Explicit Low-Interference Fallbacks
 

@@ -1932,6 +1932,54 @@ def _generic_plugin_cache_valid(cache_root: Path, expected_name: str, expected_v
     )
 
 
+def _browser_plugin_copy_status(plugin_root: Path) -> dict[str, Any]:
+    manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
+    browser_client = plugin_root / "scripts" / "browser-client.mjs"
+    skill_candidates = [
+        plugin_root / "skills" / "control-in-app-browser" / "SKILL.md",
+        plugin_root / "skills" / "browser" / "SKILL.md",
+    ]
+    missing: list[str] = []
+    try:
+        with manifest_path.open("r", encoding="utf-8-sig") as fh:
+            payload = json.load(fh)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "name_ok": False,
+            "missing": [".codex-plugin/plugin.json"],
+            "browser_client": str(browser_client),
+            "skill": "",
+            "error": f"failed to read browser plugin manifest: {exc}",
+        }
+    name_ok = payload.get("name") == "browser"
+    if not name_ok:
+        missing.append("browser plugin manifest name")
+    if not browser_client.is_file():
+        missing.append("scripts/browser-client.mjs")
+    present_skill = next((candidate for candidate in skill_candidates if candidate.is_file()), None)
+    if present_skill is None:
+        missing.append("skills/control-in-app-browser/SKILL.md")
+    return {
+        "ok": name_ok and not missing,
+        "name_ok": name_ok,
+        "missing": missing,
+        "browser_client": str(browser_client),
+        "skill": str(present_skill) if present_skill is not None else "",
+        "error": "",
+    }
+
+
+def _browser_plugin_copy_ok(plugin_root: Path) -> bool:
+    return bool(_browser_plugin_copy_status(plugin_root).get("ok"))
+
+
+def _browser_cache_valid(cache_root: Path, expected_version: str) -> bool:
+    if not _generic_plugin_cache_valid(cache_root, "browser", expected_version):
+        return False
+    return _browser_plugin_copy_ok(cache_root)
+
+
 def _generic_plugin_copy_ok(plugin_root: Path, expected_name: str) -> bool:
     try:
         with (plugin_root / ".codex-plugin" / "plugin.json").open("r", encoding="utf-8-sig") as fh:
@@ -1962,7 +2010,7 @@ def ensure_browser_cache() -> tuple[str, Path, bool]:
     version = str(manifest["version"])
     dest = BROWSER_CACHE_BASE / version
     changed = False
-    if not _generic_plugin_cache_valid(dest, "browser", version):
+    if not _browser_cache_valid(dest, version):
         _copy_cache(BROWSER_SOURCE, dest)
         changed = True
     return version, dest, changed
@@ -2865,16 +2913,20 @@ def browser_plugin_status() -> dict[str, Any]:
             "legacy_disabled": legacy_disabled,
             "source": str(BROWSER_SOURCE),
         }
+    source_contract = _browser_plugin_copy_status(BROWSER_SOURCE)
     manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser")
     version = str(manifest["version"])
     cache_root = BROWSER_CACHE_BASE / version
-    cache_valid = _generic_plugin_cache_valid(cache_root, "browser", version)
-    ok = enabled and not disabled and not legacy_disabled and cache_valid
+    cache_contract = _browser_plugin_copy_status(cache_root)
+    cache_valid = _browser_cache_valid(cache_root, version)
+    ok = enabled and not disabled and not legacy_disabled and source_contract["ok"] and cache_valid
     failure_class = ""
     if not enabled:
         failure_class = "browser_plugin_not_enabled"
     elif disabled or legacy_disabled:
         failure_class = "browser_plugin_disabled"
+    elif not source_contract["ok"]:
+        failure_class = "browser_plugin_source_invalid"
     elif not cache_valid:
         failure_class = "browser_plugin_cache_invalid"
     return {
@@ -2886,6 +2938,8 @@ def browser_plugin_status() -> dict[str, Any]:
         "version": version,
         "cache_root": str(cache_root),
         "cache_valid": cache_valid,
+        "source_contract": source_contract,
+        "cache_contract": cache_contract,
         "source": str(BROWSER_SOURCE),
     }
 
@@ -2940,7 +2994,7 @@ def _mirror_bundled_marketplace(source: Path, dest: Path, *, patch_computer_use:
             )
             if plugin_name == "chrome" and not _chrome_plugin_copy_ok(dest_plugin):
                 manifest_needs_copy = True
-            if plugin_name == "browser" and not _generic_plugin_copy_ok(dest_plugin, "browser"):
+            if plugin_name == "browser" and not _browser_plugin_copy_ok(dest_plugin):
                 manifest_needs_copy = True
         if manifest_needs_copy:
             tmp = dest_plugin.with_name(dest_plugin.name + f".tmp-{os.getpid()}")
@@ -4973,7 +5027,7 @@ def status() -> dict[str, Any]:
     browser_version = str(browser_manifest.get("version") or "")
     browser_cache_root = BROWSER_CACHE_BASE / browser_version if browser_version else BROWSER_CACHE_BASE
     browser_cache_valid = bool(
-        browser_version and _generic_plugin_cache_valid(browser_cache_root, "browser", browser_version)
+        browser_version and _browser_cache_valid(browser_cache_root, browser_version)
     )
     cache_root = CACHE_BASE / version
     config_text = CONFIG.read_text(encoding="utf-8") if CONFIG.exists() else ""

@@ -159,8 +159,11 @@ Expected high-level result:
   `browser_plugin` and can be checked with
   `$HOME/.codex/bin/codex-computer-use-guard browser-plugin-status`. The guard
   keeps `browser@openai-bundled` enabled and removes stale
-  `browser-use@openai-bundled` suppression entries, but Browser readiness is not
-  counted as native Computer Use smoke evidence.
+  `browser-use@openai-bundled` suppression entries. It also treats the cached
+  Browser plugin as invalid if `scripts/browser-client.mjs` or the Browser skill
+  file is missing, so an incomplete cache is recopied instead of being reported
+  as ready. Browser readiness is not counted as native Computer Use smoke
+  evidence.
 - `codex-dialog-autopilot` is installed from this repo, its LaunchAgent is
   loaded, and its latest daemon health was `ok=true`.
 

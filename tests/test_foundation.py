@@ -957,9 +957,59 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("chrome-extension-force-install --yes", status_body)
         self.assertNotIn("installManifest.mjs", status_body)
         self.assertIn('plugin_name == "chrome" and not _chrome_plugin_copy_ok(dest_plugin)', guard_source)
-        self.assertIn('plugin_name == "browser" and not _generic_plugin_copy_ok(dest_plugin, "browser")', guard_source)
+        self.assertIn('plugin_name == "browser" and not _browser_plugin_copy_ok(dest_plugin)', guard_source)
         self.assertIn("chrome_plugin_status(auto_repair=True)", guard_source)
         self.assertIn('chrome_plugin_status(auto_repair="--repair" in argv or "--ensure" in argv)', guard_source)
+
+    def test_browser_plugin_status_requires_browser_use_entrypoint(self) -> None:
+        guard = load_guard_module()
+        originals = {
+            "BROWSER_SOURCE": guard.BROWSER_SOURCE,
+            "BROWSER_CACHE_BASE": guard.BROWSER_CACHE_BASE,
+            "CONFIG": guard.CONFIG,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source" / "browser"
+            cache_base = root / "cache"
+            version = "26.test"
+            for plugin in (source, cache_base / version):
+                (plugin / ".codex-plugin").mkdir(parents=True)
+                (plugin / ".codex-plugin" / "plugin.json").write_text(
+                    json.dumps({"name": "browser", "version": version}),
+                    encoding="utf-8",
+                )
+                (plugin / "skills" / "control-in-app-browser").mkdir(parents=True)
+                (plugin / "skills" / "control-in-app-browser" / "SKILL.md").write_text(
+                    "# Browser\n",
+                    encoding="utf-8",
+                )
+            config = root / "config.toml"
+            config.write_text('[plugins."browser@openai-bundled"]\nenabled = true\n', encoding="utf-8")
+            try:
+                guard.BROWSER_SOURCE = source
+                guard.BROWSER_CACHE_BASE = cache_base
+                guard.CONFIG = config
+
+                missing_status = guard.browser_plugin_status()
+                self.assertFalse(missing_status["ok"])
+                self.assertEqual(missing_status["failure_class"], "browser_plugin_source_invalid")
+                self.assertIn("scripts/browser-client.mjs", missing_status["source_contract"]["missing"])
+
+                for plugin in (source, cache_base / version):
+                    (plugin / "scripts").mkdir()
+                    (plugin / "scripts" / "browser-client.mjs").write_text(
+                        "export {};\n",
+                        encoding="utf-8",
+                    )
+
+                ready_status = guard.browser_plugin_status()
+                self.assertTrue(ready_status["ok"])
+                self.assertTrue(ready_status["source_contract"]["ok"])
+                self.assertTrue(ready_status["cache_contract"]["ok"])
+            finally:
+                for name, value in originals.items():
+                    setattr(guard, name, value)
 
     def test_chrome_browser_client_patch_materializes_extension_backend_route(self) -> None:
         guard = load_guard_module()
