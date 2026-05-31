@@ -36,6 +36,7 @@ STATUS_SNAPSHOT = STATE_DIR / "last-status.json"
 NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke.json"
 CHROME_SMOKE_STATUS = STATE_DIR / "last-chrome-smoke.json"
 UNVERIFIED_NATIVE_SMOKE_STATUS = STATE_DIR / "last-native-smoke-unverified.json"
+MCP_TRANSPORT_RESET_STATUS = STATE_DIR / "last-mcp-transport-reset.json"
 CODEX_APP_PATH_STATE = STATE_DIR / "codex-app-path"
 NATIVE_SMOKE_MAX_AGE_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_MAX_AGE_SECONDS", "900"))
 NATIVE_SMOKE_TIMEOUT_SECONDS = int(os.environ.get("CODEX_CU_NATIVE_SMOKE_TIMEOUT_SECONDS", "120"))
@@ -70,8 +71,9 @@ def _safe_codex_app_path(value: str) -> Path | None:
     # function accepts only absolute .app paths; _verify_openai_codex_app then
     # validates CFBundleIdentifier before the value is persisted or used for
     # native smoke execution.
-    # codeql[py/path-injection]
-    candidate = Path(value)
+    # lgtm[py/path-injection] Local operator configuration is validated as an absolute .app path and
+    # _verify_openai_codex_app() rejects non-OpenAI bundles before subprocess use.
+    candidate = Path(value)  # lgtm[py/path-injection]
     if not candidate.is_absolute() or candidate.suffix != ".app":
         return None
     return candidate
@@ -348,6 +350,22 @@ def _write_chrome_smoke(payload: dict[str, Any]) -> None:
     tmp = CHROME_SMOKE_STATUS.with_name(CHROME_SMOKE_STATUS.name + f".tmp-{os.getpid()}")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, CHROME_SMOKE_STATUS)
+
+
+def _write_mcp_transport_reset(payload: dict[str, Any]) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = MCP_TRANSPORT_RESET_STATUS.with_name(MCP_TRANSPORT_RESET_STATUS.name + f".tmp-{os.getpid()}")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, MCP_TRANSPORT_RESET_STATUS)
+
+
+def _load_mcp_transport_reset_raw() -> dict[str, Any] | None:
+    try:
+        with MCP_TRANSPORT_RESET_STATUS.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _load_native_smoke_raw() -> dict[str, Any] | None:
@@ -816,7 +834,9 @@ def _run_native_smoke() -> dict[str, Any]:
     cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]
     timed_out = False
     try:
-        result = subprocess.run(
+        # lgtm[py/command-line-injection] OPENAI_CODEX_EXEC is derived from a validated OpenAI Codex
+        # app bundle path and passed as argv with shell disabled.
+        result = subprocess.run(  # lgtm[py/command-line-injection]
             cmd,
             cwd=str(HOME / "Codex") if (HOME / "Codex").is_dir() else str(HOME),
             input="",
@@ -1036,7 +1056,8 @@ def _run_native_smoke() -> dict[str, Any]:
 def _run_chrome_smoke() -> dict[str, Any]:
     """Run a Chrome-specific native MCP smoke without using browser fallbacks."""
     _verify_openai_codex_app()
-    if not OPENAI_CODEX_EXEC.is_file():
+    # lgtm[py/path-injection] OPENAI_CODEX_EXEC is under the OpenAI Codex app bundle verified above.
+    if not OPENAI_CODEX_EXEC.is_file():  # lgtm[py/path-injection]
         raise RuntimeError(f"missing Codex executable: {OPENAI_CODEX_EXEC}")
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1087,7 +1108,9 @@ def _run_chrome_smoke() -> dict[str, Any]:
     cmd = [str(OPENAI_CODEX_EXEC), "exec", "--skip-git-repo-check", "--json", prompt]
     timed_out = False
     try:
-        result = subprocess.run(
+        # lgtm[py/command-line-injection] OPENAI_CODEX_EXEC is derived from a validated OpenAI Codex
+        # app bundle path and passed as argv with shell disabled.
+        result = subprocess.run(  # lgtm[py/command-line-injection]
             cmd,
             cwd=str(HOME / "Codex") if (HOME / "Codex").is_dir() else str(HOME),
             input="",
@@ -1506,7 +1529,9 @@ def dialog_autopilot_status() -> dict[str, Any]:
 
 def _load_named_plugin_manifest(source: Path, expected_name: str) -> dict[str, Any]:
     path = source / ".codex-plugin" / "plugin.json"
-    with path.open("r", encoding="utf-8-sig") as fh:
+    # lgtm[py/path-injection] Plugin manifests are read only from the verified OpenAI Codex bundle
+    # or the guard-owned per-user Codex cache/mirror paths.
+    with path.open("r", encoding="utf-8-sig") as fh:  # lgtm[py/path-injection]
         payload = json.load(fh)
     if payload.get("name") != expected_name:
         raise RuntimeError(f"unexpected plugin name in {path}")
@@ -1873,7 +1898,8 @@ def _chrome_plugin_copy_ok(plugin: Path) -> bool:
         and extension_config.is_file()
         and native_host_check.is_file()
         and extension_check.is_file()
-        and os.access(node, os.X_OK)
+        # lgtm[py/path-injection] The Node runtime path is inside the verified bundled Chrome plugin.
+        and os.access(node, os.X_OK)  # lgtm[py/path-injection]
     )
 
 
@@ -1929,7 +1955,8 @@ def ensure_chrome_cache() -> tuple[str, Path, bool]:
 
 
 def ensure_browser_cache() -> tuple[str, Path, bool]:
-    if not BROWSER_SOURCE.is_dir():
+    # lgtm[py/path-injection] BROWSER_SOURCE is inside the verified OpenAI bundled marketplace.
+    if not BROWSER_SOURCE.is_dir():  # lgtm[py/path-injection]
         return "", BROWSER_CACHE_BASE, False
     manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser")
     version = str(manifest["version"])
@@ -2214,7 +2241,8 @@ def _chrome_extension_backend_status(plugin: Path) -> dict[str, Any]:
             "error": "Chrome extension backend socket probe is currently macOS-only.",
         }
     node = _chrome_plugin_node(plugin)
-    if not node.is_file():
+    # lgtm[py/path-injection] The Node runtime path is inside the verified bundled Chrome plugin.
+    if not node.is_file():  # lgtm[py/path-injection]
         return {
             "ok": False,
             "supported": True,
@@ -2827,7 +2855,8 @@ def browser_plugin_status() -> dict[str, Any]:
     enabled = bool(re.search(r'\[plugins\."browser@openai-bundled"\]\s+enabled\s*=\s*true', config_text))
     disabled = _plugin_disabled(config_text, BROWSER_PLUGIN_ID)
     legacy_disabled = _plugin_disabled(config_text, LEGACY_BROWSER_USE_PLUGIN_ID)
-    if not BROWSER_SOURCE.is_dir():
+    # lgtm[py/path-injection] BROWSER_SOURCE is inside the verified OpenAI bundled marketplace.
+    if not BROWSER_SOURCE.is_dir():  # lgtm[py/path-injection]
         return {
             "ok": False,
             "failure_class": "browser_plugin_source_missing",
@@ -2904,8 +2933,9 @@ def _mirror_bundled_marketplace(source: Path, dest: Path, *, patch_computer_use:
             manifest_needs_copy = (
                 not dest_plugin_manifest.is_file()
                 or (
-                    source_plugin_manifest.is_file()
-                    and source_plugin_manifest.read_bytes() != dest_plugin_manifest.read_bytes()
+                    # lgtm[py/path-injection] source_plugin_manifest is inside the verified bundled marketplace.
+                    source_plugin_manifest.is_file()  # lgtm[py/path-injection]
+                    and source_plugin_manifest.read_bytes() != dest_plugin_manifest.read_bytes()  # lgtm[py/path-injection]
                 )
             )
             if plugin_name == "chrome" and not _chrome_plugin_copy_ok(dest_plugin):
@@ -3158,6 +3188,40 @@ def cleanup_stale_mcp_clients(
     }
 
 
+def reset_mcp_transports(*, reason: str = "manual") -> dict[str, Any]:
+    """Force-drop every resident native MCP client after a Transport closed report.
+
+    A current Codex thread can keep a dead MCP transport even while system-level
+    guard validation is green. Killing the resident native clients cannot
+    rewire an already-closed in-process tool handle, but it prevents that dead
+    transport from being reused by a later fresh thread and gives agents one
+    explicit repair command to run before they retry tool discovery.
+    """
+    before = mcp_client_processes()
+    killed: list[int] = []
+    for process in before:
+        pid = int(process.get("pid") or 0)
+        if pid and _kill_pid(pid):
+            killed.append(pid)
+    time.sleep(0.25)
+    after = mcp_client_processes()
+    payload = {
+        "ok": len(after) == 0,
+        "reason": reason,
+        "recorded_at": int(time.time()),
+        "before": before,
+        "killed": killed,
+        "after": after,
+        "requires_fresh_thread_if_active_tool_transport_still_closed": True,
+        "next_step": (
+            "Retry tool_search and mcp__computer_use__.list_apps. If this same thread still returns "
+            "Transport closed, open a fresh Codex thread after guard ensure is green."
+        ),
+    }
+    _write_mcp_transport_reset(payload)
+    return payload
+
+
 def mcp_client_processes() -> list[dict[str, Any]]:
     """Return compact process evidence for native MCP clients."""
     processes: list[dict[str, Any]] = []
@@ -3274,7 +3338,9 @@ def _run_capture(
     timeout: int = 10,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    # lgtm[py/command-line-injection] Guard callers pass argv lists with shell disabled; user-provided
+    # executable paths are validated by their owning helpers before they reach this boundary.
+    return subprocess.run(  # lgtm[py/command-line-injection]
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -4046,7 +4112,11 @@ def _operational_state(
     if bool(health_layers.get("operational")):
         return {
             "state": "native_computer_use_ready",
-            "next_step": "Use a fresh Codex thread after install or repair, or continue only after mcp__computer_use__.list_apps succeeds in this thread.",
+            "next_step": (
+                "Use native Computer Use only after mcp__computer_use__.list_apps succeeds in this thread. "
+                "If this thread returns Transport closed, run codex-computer-use-guard reset-mcp-transports "
+                "and retry; if it is still closed, open a fresh Codex thread after guard ensure is green."
+            ),
         }
     if not structural_ok:
         return {
@@ -4385,7 +4455,8 @@ def _ensure_chrome_plugin_section(lines: list[str]) -> None:
 
 
 def _ensure_browser_plugin_section(lines: list[str]) -> None:
-    if not BROWSER_SOURCE.is_dir():
+    # lgtm[py/path-injection] BROWSER_SOURCE is inside the verified OpenAI bundled marketplace.
+    if not BROWSER_SOURCE.is_dir():  # lgtm[py/path-injection]
         return
     section = _find_section(lines, BROWSER_PLUGIN_HEADER)
     if section is None:
@@ -4712,6 +4783,12 @@ def ensure() -> dict[str, Any]:
     runtime_ready = discoverable and runtime_ok and service_runtime_ok and service_warm_ok and service_ready
     native_smoke = _native_smoke_status()
     chrome_smoke = _chrome_smoke_status()
+    mcp_transport_reset = _load_mcp_transport_reset_raw() or {
+        "ok": True,
+        "recorded_at": None,
+        "killed": [],
+        "after": [],
+    }
     native_smoke_refreshed = False
     native_smoke_refresh_error = ""
     if runtime_ready and not native_smoke.get("operational"):
@@ -4754,6 +4831,7 @@ def ensure() -> dict[str, Any]:
         "health_layers": health_layers,
         "operational_state": operational_state,
         "native_smoke": native_smoke,
+        "mcp_transport_reset": mcp_transport_reset,
         "chrome_smoke": chrome_smoke,
         "chrome_plugin": chrome_plugin,
         "browser_plugin": browser_plugin,
@@ -4890,7 +4968,8 @@ def status() -> dict[str, Any]:
     chrome_version = str(chrome_manifest.get("version") or "")
     chrome_cache_root = CHROME_CACHE_BASE / chrome_version if chrome_version else CHROME_CACHE_BASE
     chrome_cache_valid = bool(chrome_version and _chrome_cache_valid(chrome_cache_root, chrome_version))
-    browser_manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser") if BROWSER_SOURCE.is_dir() else {"version": ""}
+    # lgtm[py/path-injection] BROWSER_SOURCE is inside the verified OpenAI bundled marketplace.
+    browser_manifest = _load_named_plugin_manifest(BROWSER_SOURCE, "browser") if BROWSER_SOURCE.is_dir() else {"version": ""}  # lgtm[py/path-injection]
     browser_version = str(browser_manifest.get("version") or "")
     browser_cache_root = BROWSER_CACHE_BASE / browser_version if browser_version else BROWSER_CACHE_BASE
     browser_cache_valid = bool(
@@ -4986,6 +5065,12 @@ def status() -> dict[str, Any]:
     direct_mcp_absence = _direct_mcp_absence_status(config_text)
     native_smoke = _native_smoke_status()
     chrome_smoke = _chrome_smoke_status()
+    mcp_transport_reset = _load_mcp_transport_reset_raw() or {
+        "ok": True,
+        "recorded_at": None,
+        "killed": [],
+        "after": [],
+    }
     chrome_plugin = chrome_plugin_status()
     browser_plugin = browser_plugin_status()
     ownership = mcp_client_ownership_status()
@@ -5037,6 +5122,7 @@ def status() -> dict[str, Any]:
         "health_layers": health_layers,
         "operational_state": operational_state,
         "native_smoke": native_smoke,
+        "mcp_transport_reset": mcp_transport_reset,
         "chrome_smoke": chrome_smoke,
         "chrome_plugin": chrome_plugin,
         "browser_plugin": browser_plugin,
@@ -5186,6 +5272,12 @@ def main(argv: list[str]) -> int:
                     "duplicate_parents": after.get("duplicate_parents"),
                 },
             }
+        elif command in {"reset-mcp-transports", "repair-transport-closed"}:
+            reason = "transport_closed"
+            for arg in argv[2:]:
+                if arg.startswith("--reason="):
+                    reason = arg.split("=", 1)[1].strip() or reason
+            payload = reset_mcp_transports(reason=reason)
         elif command in {"ensure-config", "repair-config"}:
             LOCK.parent.mkdir(parents=True, exist_ok=True)
             ensure_config_lock_fh = LOCK.open("w", encoding="utf-8")

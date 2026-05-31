@@ -27,8 +27,11 @@ The important distinction is:
 - `operational_state.state=native_computer_use_ready` means the installed route
   has current native evidence. It does not prove that an already-open Codex
   thread kept a live MCP transport after repair; that thread still needs a
-  successful `mcp__computer_use__.list_apps` call, or the user should open a
-  fresh Codex thread.
+  successful `mcp__computer_use__.list_apps` call. If the thread returns
+  `Transport closed`, run
+  `$HOME/.codex/bin/codex-computer-use-guard reset-mcp-transports`, retry
+  native discovery, and use a fresh Codex thread if the same in-thread tool
+  handle remains closed.
 
 The system must not report full success just because the config looks right.
 Full success requires real native calls and no duplicate native MCP clients
@@ -230,8 +233,10 @@ computer-use
   original native arguments.
 - If `mcp__computer_use__` is visible but native calls return
   `Transport closed`, treat the current thread as stale MCP transport state.
-  Do not use fallbacks as proof; run full `ensure` if needed and retry from a
-  fresh Codex thread.
+  Do not use fallbacks as proof; run
+  `$HOME/.codex/bin/codex-computer-use-guard reset-mcp-transports`, run full
+  `ensure` if needed, and retry. If the same thread still reports
+  `Transport closed`, open a fresh Codex thread.
 - If tools remain absent after `tool_search`, run
   `$HOME/.codex/bin/codex-computer-use-guard ensure`; if they still remain
   absent in that thread, report a native exposure blocker and use a fresh

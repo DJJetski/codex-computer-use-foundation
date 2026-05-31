@@ -171,8 +171,16 @@ fails closed and tells you to run full `ensure`, use `tool_search`, or open a
 fresh Codex thread.
 
 If the guard is healthy but the already-open thread returns `Transport closed`
-from `mcp__computer_use__`, treat that current thread as stale MCP state. Open a
-fresh Codex thread and prove the native path again with
+from `mcp__computer_use__`, treat that current thread as stale MCP transport
+state. Run the explicit transport reset:
+
+```bash
+$HOME/.codex/bin/codex-computer-use-guard reset-mcp-transports
+```
+
+Then retry `tool_search` and `mcp__computer_use__.list_apps`. If that same
+thread still reports `Transport closed`, open a fresh Codex thread after
+`ensure` is green and prove the native path again with
 `mcp__computer_use__.list_apps`; do not switch to fallback automation.
 
 ## Release Evidence
@@ -184,7 +192,7 @@ release audit, package build, and release drill against a temporary home.
 
 Release notes describe the exact capability and validation changes for that
 package. Start with the latest note:
-[`docs/releases/v0.1.15.md`](docs/releases/v0.1.15.md).
+[`docs/releases/v0.1.16.md`](docs/releases/v0.1.16.md).
 
 ## Native Tool Surface
 

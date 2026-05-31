@@ -670,6 +670,34 @@ class FoundationTests(unittest.TestCase):
         self.assertFalse(cleanup["kill_orphans"])
         self.assertEqual(cleanup["running"], 1)
 
+    def test_reset_mcp_transports_kills_all_native_mcp_clients(self) -> None:
+        guard = load_guard_module()
+        killed: list[int] = []
+        writes: list[dict[str, object]] = []
+        calls = {"count": 0}
+
+        def fake_processes(_needle: str) -> list[tuple[int, int, str]]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return [
+                    (701, 11, "/tmp/SkyComputerUseClient mcp"),
+                    (702, 12, "/tmp/SkyComputerUseClient mcp"),
+                ]
+            return []
+
+        guard._processes_matching = fake_processes
+        guard._process_age_seconds = lambda pid: 30
+        guard._kill_pid = lambda pid: killed.append(pid) or True
+        guard._write_mcp_transport_reset = lambda payload: writes.append(payload)
+
+        payload = guard.reset_mcp_transports(reason="transport_closed")
+
+        self.assertEqual(killed, [701, 702])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["reason"], "transport_closed")
+        self.assertTrue(payload["requires_fresh_thread_if_active_tool_transport_still_closed"])
+        self.assertEqual(len(writes), 1)
+
     def test_status_command_does_not_write_status_snapshot(self) -> None:
         guard = load_guard_module()
         writes: list[dict[str, object]] = []

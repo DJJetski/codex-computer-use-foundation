@@ -98,8 +98,11 @@ API.
    automation for a native-only Computer Use request.
    If the namespace is visible but `list_apps` returns `Transport closed`, the
    installed route may be repaired while the current thread's MCP transport is
-   stale. Open a fresh Codex thread after `ensure`; do not switch to fallback
-   automation as proof of native success.
+   stale. First run
+   `~/.codex/bin/codex-computer-use-guard reset-mcp-transports`, then retry
+   `tool_search` and `mcp__computer_use__.list_apps`. If the same thread still
+   returns `Transport closed`, open a fresh Codex thread after `ensure`; do not
+   switch to fallback automation as proof of native success.
    If `status` reports stale smoke while `mcp__computer_use__.list_apps` works
    in the active thread, still run full `ensure`; the guard is intentionally
    fail-closed until it has fresh authoritative smoke evidence.
@@ -275,11 +278,16 @@ The guard must keep all of these true:
   `SkyComputerUseClient mcp` clients under one Codex AppServer parent. Full
   `ensure` refreshes stale or missing smoke evidence and cleans old duplicate
   native MCP clients both before and after smoke refresh when
-  structural/runtime readiness is present;
-  `ensure-config` remains a fast structural repair path and does not prove
-  operational health by itself. `structural_ok=true` means
-  configuration/discovery/runtime are repaired but does not prove native
-  Computer Use works.
+	  structural/runtime readiness is present;
+	  `ensure-config` remains a fast structural repair path and does not prove
+	  operational health by itself. `structural_ok=true` means
+	  configuration/discovery/runtime are repaired but does not prove native
+	  Computer Use works.
+- `reset-mcp-transports` is the aggressive repair path for a visible but closed
+  native MCP namespace. It kills resident `SkyComputerUseClient mcp` processes
+  and records `last-mcp-transport-reset.json`. It cannot revive an already
+  closed in-process tool handle by itself, so the next required proof is still
+  `mcp__computer_use__.list_apps` in this thread or in a fresh Codex thread.
 - native smoke evidence is stored at
   `~/.codex/state/computer-use-guard/last-native-smoke.json` and may be written
   with `codex-computer-use-guard record-native-smoke` only after a real

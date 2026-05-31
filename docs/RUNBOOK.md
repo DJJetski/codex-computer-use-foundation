@@ -68,6 +68,19 @@ the installed native surface as broken. Do not use Safari, Chrome, AppleScript,
 or coordinate automation as evidence that native Computer Use works; repair the
 native route and retry from a fresh Codex thread.
 
+If `mcp__computer_use__` is visible but `list_apps` or another native call
+returns `Transport closed`, drop the resident native MCP clients before retrying:
+
+```bash
+~/.codex/bin/codex-computer-use-guard reset-mcp-transports | jq '{ok,killed,after,next_step}'
+```
+
+Then rerun `tool_search` and `mcp__computer_use__.list_apps`. If the same
+already-open thread still reports `Transport closed`, the in-thread tool handle
+is stale; open a fresh Codex thread after `ensure` is green. Do not use Chrome
+Extension success or Browser Use success as proof that native Computer Use is
+alive in that thread.
+
 ## Full Repair And Validation
 
 ```bash
@@ -78,7 +91,7 @@ Use this when:
 
 - native tools are absent after `tool_search`
 - native calls time out
-- current thread reports `Transport closed`
+  - current thread reports `Transport closed` after `reset-mcp-transports`
 - `status` shows stale/missing/non-operational smoke
 - plugin/cache/config was rewritten
 - Codex was updated
@@ -286,6 +299,12 @@ Do not run the forced variant while another active thread is in the middle of a
 native Computer Use task. `status` remains read-only. `ok=true` requires
 `mcp_client_ownership.ok=true`; duplicate `SkyComputerUseClient mcp` groups are
 treated as a real operational blocker, not a cosmetic diagnostic.
+
+For the stronger `Transport closed` case, use `reset-mcp-transports`. It kills
+all resident native MCP clients because the active thread's tool handle is
+already closed. This does not replace Browser Use or Chrome Browser Use and does
+not count as native success; success is still a subsequent
+`mcp__computer_use__.list_apps` call in the active or fresh thread.
 
 ## Background Use And Second Pointer Expectations
 
